@@ -222,9 +222,13 @@ int main(int argc, char *argv[]) {
 
     FILE *f = fopen(filename, "r");
     if (!f) {
-        f = fopen(filename, "w");
-        if (f) fclose(f);
-        f = fopen(filename, "r");
+        /* Only create for edit commands that write to new files */
+        if (strcmp(flag, "-i") == 0 || strcmp(flag, "-insert") == 0 ||
+            strcmp(flag, "-a") == 0 || strcmp(flag, "-p") == 0) {
+            f = fopen(filename, "w");
+            if (f) fclose(f);
+            f = fopen(filename, "r");
+        }
     }
     if (!f) { perror(filename); return 1; }
 
