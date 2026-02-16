@@ -1,8 +1,30 @@
 #include "iv.h"
+#include <stdlib.h>
+#include <dirent.h>
+#include <sys/stat.h>
+#include <regex.h>
+
+static const char *get_backup_dir(void) {
+    const char *d = getenv("IV_BACKUP_DIR");
+    return d && *d ? d : "/tmp";
+}
+
+void get_backup_path(const char *filename, char *buf, size_t size) {
+    const char *p = filename;
+    while (*p == '.' && p[1] == '/') p += 2;
+    while (*p == '/') p++;
+    char name[256];
+    size_t j = 0;
+    for (; *p && j < sizeof(name) - 1; p++)
+        name[j++] = (*p == '/') ? '_' : *p;
+    name[j] = '\0';
+    if (j == 0) name[0] = 'f', name[1] = '\0';
+    snprintf(buf, size, "%s/iv_%s.bak", get_backup_dir(), name);
+}
 
 void backup_file(const char *filename) {
     char bakname[512];
-    snprintf(bakname, sizeof(bakname), "%s.bak", filename);
+    get_backup_path(filename, bakname, sizeof(bakname));
     FILE *src = fopen(filename, "r");
     if (!src) return;
     FILE *dst = fopen(bakname, "w");
@@ -140,10 +162,121 @@ int search_replace(char *lines[], int count, const char *pattern,
     return total;
 }
 
+static char *replace_regex_in_string(const char *line, regex_t *re,
+        const char *repl, int global, int *n) {
+    size_t rlen = strlen(repl);
+    size_t cap = strlen(line) + 256;
+    char *out = malloc(cap);
+    if (!out) return NULL;
+    out[0] = '\0';
+    size_t len = 0;
+    const char *cur = line;
+    regmatch_t m;
+    *n = 0;
+    while (regexec(re, cur, 1, &m, 0) == 0) {
+        size_t before = m.rm_so;
+        if (len + before + rlen + 1 >= cap) {
+            cap = len + before + rlen + 256;
+            char *tmp = realloc(out, cap);
+            if (!tmp) { free(out); return NULL; }
+            out = tmp;
+        }
+        memcpy(out + len, cur, before);
+        len += before;
+        memcpy(out + len, repl, rlen);
+        len += rlen;
+        cur += m.rm_eo;
+        (*n)++;
+        if (!global) {
+            size_t rest = strlen(cur);
+            if (len + rest + 1 >= cap) { cap = len + rest + 256; char *t = realloc(out, cap); if (!t) { free(out); return NULL; } out = t; }
+            memcpy(out + len, cur, rest + 1);
+            len += rest;
+            break;
+        }
+    }
+    if (*n == 0) {
+        strcpy(out, line);
+        len = strlen(line);
+    }
+    out[len] = '\0';
+    return out;
+}
+
+int search_replace_regex(char *lines[], int count, const char *pattern,
+                         const char *replacement, int global) {
+    if (!pattern || !*pattern) return 0;
+    regex_t re;
+    if (regcomp(&re, pattern, REG_EXTENDED) != 0) return -1;
+    int total = 0;
+    for (int i = 0; i < count; i++) {
+        int n;
+        char *new_line = replace_regex_in_string(lines[i], &re, replacement, global, &n);
+        if (new_line && n > 0) {
+            free(lines[i]);
+            lines[i] = new_line;
+            total += n;
+        } else if (new_line) {
+            free(new_line);
+        }
+    }
+    regfree(&re);
+    return total;
+}
+
 void write_lines_to_file(const char *filename, char *lines[], int count) {
     FILE *f = fopen(filename, "w");
     if (!f) { perror("Could not write file"); return; }
     for (int i = 0; i < count; i++)
         fputs(lines[i], f);
     fclose(f);
+}
+
+void list_backups(const char *filter) {
+    const char *dir = get_backup_dir();
+    DIR *d = opendir(dir);
+    if (!d) { perror(dir); return; }
+    char path[512];
+    struct dirent *e;
+    while ((e = readdir(d))) {
+        if (e->d_name[0] == '.' || strncmp(e->d_name, "iv_", 3) != 0) continue;
+        size_t len = strlen(e->d_name);
+        if (len < 5 || strcmp(e->d_name + len - 4, ".bak") != 0) continue;
+        if (filter && *filter) {
+            char want[512];
+            get_backup_path(filter, want, sizeof(want));
+            snprintf(path, sizeof(path), "%s/%s", dir, e->d_name);
+            if (strcmp(path, want) != 0) continue;
+        }
+        snprintf(path, sizeof(path), "%s/%s", dir, e->d_name);
+        struct stat st;
+        if (stat(path, &st) == 0)
+            printf("%s  %zu bytes\n", path, (size_t)st.st_size);
+    }
+    closedir(d);
+}
+
+void clean_backups(const char *filter) {
+    const char *dir = get_backup_dir();
+    DIR *d = opendir(dir);
+    if (!d) { perror(dir); return; }
+    char path[512];
+    struct dirent *e;
+    int removed = 0;
+    while ((e = readdir(d))) {
+        if (e->d_name[0] == '.' || strncmp(e->d_name, "iv_", 3) != 0) continue;
+        size_t len = strlen(e->d_name);
+        if (len < 5 || strcmp(e->d_name + len - 4, ".bak") != 0) continue;
+        if (filter && *filter) {
+            char want[512];
+            get_backup_path(filter, want, sizeof(want));
+            snprintf(path, sizeof(path), "%s/%s", dir, e->d_name);
+            if (strcmp(path, want) != 0) continue;
+        }
+        snprintf(path, sizeof(path), "%s/%s", dir, e->d_name);
+        if (remove(path) == 0) removed++;
+    }
+    closedir(d);
+    if (removed > 0)
+        fprintf(stderr, "iv: removed %d backup(s)\n", removed);
 }

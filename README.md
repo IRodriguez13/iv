@@ -20,6 +20,12 @@ make clean
 | `iv -v file --no-numbers` | Muestra el archivo sin números de línea |
 | `iv -va start-end file` | Muestra el rango de líneas indicado |
 | `iv -wc file` | Cuenta las líneas del archivo |
+| `iv -n file "pattern"` | Números de línea donde aparece el patrón |
+| `iv -u file` | Deshace: restaura desde backup en `/tmp` |
+| `iv -diff [-u] file` | Muestra backup vs actual; `-u` = diff unificado |
+| `iv -l [file]` | Lista backups en el directorio de backup |
+| `iv -z [file]` | Elimina backups (todos o solo del archivo indicado) |
+| `iv -V` / `iv --version` | Muestra versión |
 
 ### Edición
 
@@ -28,10 +34,12 @@ make clean
 | `iv -i file "texto"` | Inserta texto al final (alias: `-insert`) |
 | `iv -i file start-end "texto"` | Inserta texto antes de la línea `start` |
 | `iv -a file "texto"` | Añade texto al final del archivo |
+| `iv -p file [file...] [range] content` | Parchea uno o más archivos; range opcional |
 | `iv -d file [start-end]` | Elimina líneas (alias: `-delete`) |
 | `iv -r file [start-end] "texto"` | Reemplaza líneas (alias: `-replace`) |
-| `iv -s file "patrón" "reemplazo"` | Sustituye la primera ocurrencia por línea |
-| `iv -s file "patrón" "reemplazo" -g` | Sustituye todas las ocurrencias |
+| `iv -s file patrón reemplazo` | Sustituye (literal) |
+| `iv -s file patrón reemplazo -E` | Sustituye con regex |
+| `iv -s file patrón reemplazo -g` | Sustituye todas las ocurrencias |
 
 ### Opciones globales
 
@@ -40,6 +48,7 @@ make clean
 | `--dry-run` | Muestra qué se haría sin modificar el archivo |
 | `--no-backup` | No crea archivo `.bak` antes de editar |
 | `--no-numbers` | Salida sin números de línea (solo con `-v` y `-va`) |
+| `-q` | Suprime la salida tipo tee en `-i`, `-a`, `-r`, `-p` |
 
 ## Rangos
 
@@ -54,13 +63,23 @@ Los rangos son 1-based. Sintaxis:
 | `-5-` | Últimas cinco líneas |
 | `2-` | Desde la línea 2 hasta el final |
 
-## Entrada desde stdin
+## Entrada: stdin o archivo
 
-Usar `-` como texto para leer desde stdin:
+El argumento de texto en `-i`, `-a` y `-r` admite tres formas:
+
+| Argumento | Comportamiento |
+|-----------|----------------|
+| `-` | Lee desde stdin |
+| Ruta a archivo existente | Lee el contenido del archivo |
+| Cualquier otro texto | Se usa como literal |
 
 ```bash
-echo "línea nueva" | iv -i file -
-cat bloque.txt | iv -a file -
+echo "línea nueva" | iv -p file           # sin arg = stdin
+iv -p main.c snippet.c                    # append archivo
+iv -p main.c 5 snippet.c                   # insertar en línea 5
+iv -p main.c 1-3 plantilla.txt             # reemplazar líneas 1-3
+iv -p f1.c f2.c snippet.c                 # parchear múltiples archivos
+iv -s file "[0-9]+" "X" -E                 # regex
 ```
 
 ## Secuencias de escape
@@ -82,17 +101,53 @@ iv -i file "línea1\nlínea2\nlínea3"
 
 ## Comportamiento tipo tee
 
-`-insert`, `-replace` y `-a` escriben en stdout el texto añadido, de forma similar a `tee`.
+`-insert`, `-replace`, `-a` y `-p` escriben en stdout el texto añadido, de forma similar a `tee`. Usa `-q` para suprimir esta salida.
 
 ## Estructura del código
 
 ```
 iv.h      — Declaraciones, constantes, IvOpts
 main.c    — Entrada, parseo de argumentos, dispatch
-view.c    — show_file, show_range, wc_lines
-edit.c    — backup, write_with_escapes, apply_patch, search_replace
+view.c    — show_file, show_range, wc_lines, find_line_numbers, stream_file_with_numbers
+edit.c    — backup, apply_patch, search_replace, search_replace_regex, list_backups
 range.c   — parse_range
 ```
+
+## Formato de diff
+
+`iv -diff file` muestra antes y después con numeración de línea. Con `-u` usa formato unificado (compatible con `diff -u`):
+
+```
+--- /tmp/iv_demo.c.bak (anterior)
+   1 | #include <stdio.h>
+   2 | int main(void) {
+   3 |     return 0;
+   4 | }
+
+--- demo.c (actual)
+   1 | // v1.0
+   2 | #include <stdio.h>
+   3 | int main(void) {
+   4 |     return 0;
+   5 | }
+```
+
+## Backup
+
+- Las copias de seguridad se guardan en `IV_BACKUP_DIR/iv_<archivo>.bak` (por defecto `/tmp`).
+- Variable de entorno `IV_BACKUP_DIR` para cambiar el directorio.
+- `iv -u` y `iv -diff` buscan el backup en esa ruta.
+- `iv -l` lista los backups; `iv -l file` filtra por archivo.
+- `iv -z` elimina todos los backups; `iv -z file` elimina solo el backup de ese archivo.
+
+## Seguridad
+
+- **Archivos binarios**: iv rechaza editar archivos que contienen bytes nulos para evitar corrupción.
+
+## Códigos de salida
+
+- `0`: éxito
+- `1`: error (archivo binario, rango inválido, uso incorrecto, etc.)
 
 ## Límites
 

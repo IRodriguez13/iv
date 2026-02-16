@@ -14,12 +14,20 @@ static void usage(const char *prog) {
     fprintf(stderr, "  %s -v [--no-numbers] file\n", prog);
     fprintf(stderr, "  %s -va [--no-numbers] start-end file\n", prog);
     fprintf(stderr, "  %s -wc file\n", prog);
+    fprintf(stderr, "  %s -n file \"pattern\"  (line numbers where pattern appears)\n", prog);
+    fprintf(stderr, "  %s -u file  (undo: restore from .bak)\n", prog);
+    fprintf(stderr, "  %s -diff [-u] file  (anterior .bak vs actual; -u = unified diff)\n", prog);
     fprintf(stderr, "  %s -i|-insert file [start-end] \"text\" [--dry-run] [--no-backup]\n", prog);
     fprintf(stderr, "  %s -a file \"text\"   (append)\n", prog);
+    fprintf(stderr, "  %s -p file [file...] [range] content  (patch, múltiples archivos)\n", prog);
+    fprintf(stderr, "  %s -s file pattern replacement [-E] [-g]  (-E = regex)\n", prog);
+    fprintf(stderr, "  %s -l [file]  (listar backups, IV_BACKUP_DIR)\n", prog);
+    fprintf(stderr, "  %s -z [file]  (limpiar backups antiguos)\n", prog);
     fprintf(stderr, "  %s -d|-delete file [start-end] [--dry-run] [--no-backup]\n", prog);
     fprintf(stderr, "  %s -r|-replace file [start-end] \"text\" [--dry-run] [--no-backup]\n", prog);
-    fprintf(stderr, "  %s -s file \"pattern\" \"replacement\" [-g] [--dry-run] [--no-backup]\n", prog);
-    fprintf(stderr, "\n  Use \"-\" as text to read from stdin. Ranges: 1-5, -3--1, -5-\n");
+    fprintf(stderr, "  %s -s file pattern replacement [-E] [-g] [--dry-run] [--no-backup]\n", prog);
+    fprintf(stderr, "\n  Text: \"-\" = stdin, path to file = file content, else literal.\n");
+    fprintf(stderr, "  Ranges: 1-5, -3--1, -5-\n");
 }
 
 static void parse_opts(int argc, char *argv[], IvOpts *opts) {
@@ -27,11 +35,15 @@ static void parse_opts(int argc, char *argv[], IvOpts *opts) {
     opts->no_backup = 0;
     opts->no_numbers = 0;
     opts->global_replace = 0;
+    opts->use_regex = 0;
+    opts->quiet = 0;
     for (int i = 0; i < argc; i++) {
         if (strcmp(argv[i], "--dry-run") == 0) opts->dry_run = 1;
         else if (strcmp(argv[i], "--no-backup") == 0) opts->no_backup = 1;
         else if (strcmp(argv[i], "--no-numbers") == 0) opts->no_numbers = 1;
         else if (strcmp(argv[i], "-g") == 0) opts->global_replace = 1;
+        else if (strcmp(argv[i], "-E") == 0 || strcmp(argv[i], "--regex") == 0) opts->use_regex = 1;
+        else if (strcmp(argv[i], "-q") == 0) opts->quiet = 1;
     }
 }
 
@@ -39,7 +51,9 @@ static void parse_opts(int argc, char *argv[], IvOpts *opts) {
 static int next_arg(int argc, char *argv[], int i) {
     for (; i < argc; i++) {
         if (strcmp(argv[i], "--dry-run") && strcmp(argv[i], "--no-backup") &&
-            strcmp(argv[i], "--no-numbers") && strcmp(argv[i], "-g"))
+            strcmp(argv[i], "--no-numbers") && strcmp(argv[i], "-g") &&
+            strcmp(argv[i], "-E") && strcmp(argv[i], "--regex") &&
+            strcmp(argv[i], "-q") && strcmp(argv[i], "-z") && strcmp(argv[i], "-u"))
             return i;
     }
     return -1;
@@ -59,11 +73,75 @@ char *read_stdin(void) {
             buf = tmp;
         }
     }
-    /* Trim trailing newline if single line? No - keep as-is for pipes */
     return buf;
 }
 
+int is_binary_file(const char *path) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return 0;
+    unsigned char buf[4096];
+    size_t n;
+    while ((n = fread(buf, 1, sizeof(buf), f)) > 0) {
+        for (size_t i = 0; i < n; i++)
+            if (buf[i] == 0) { fclose(f); return 1; }
+    }
+    fclose(f);
+    return 0;
+}
+
+char *read_file_content(const char *path) {
+    FILE *f = fopen(path, "r");
+    if (!f) return NULL;
+    size_t cap = 4096;
+    size_t len = 0;
+    char *buf = malloc(cap);
+    if (!buf) { fclose(f); return NULL; }
+    while (fgets(buf + len, (int)(cap - len), f)) {
+        len += strlen(buf + len);
+        if (len + 1 >= cap) {
+            cap *= 2;
+            char *tmp = realloc(buf, cap);
+            if (!tmp) { free(buf); fclose(f); return NULL; }
+            buf = tmp;
+        }
+    }
+    fclose(f);
+    return buf;
+}
+
+/* Resolve text arg: "-" -> stdin, existing file path -> file content, else literal */
+static char *resolve_text(const char *arg) {
+    if (!arg || !*arg) return strdup("");
+    if (strcmp(arg, "-") == 0) return read_stdin();
+    {
+        char *content = read_file_content(arg);
+        if (content) return content;
+    }
+    return strdup(arg);
+}
+
 int main(int argc, char *argv[]) {
+    if (argc < 2) {
+        usage(argv[0]);
+        return 1;
+    }
+
+    char *flag = argv[1];
+    if (strcmp(flag, "--version") == 0 || strcmp(flag, "-V") == 0) {
+        printf("iv %s\n", IV_VERSION);
+        return 0;
+    }
+    if (strcmp(flag, "-l") == 0 || strcmp(flag, "-lb") == 0) {
+        char *filter = (argc >= 3) ? argv[2] : NULL;
+        list_backups(filter);
+        return 0;
+    }
+    if (strcmp(flag, "-z") == 0) {
+        char *filter = (argc >= 3) ? argv[2] : NULL;
+        clean_backups(filter);
+        return 0;
+    }
+
     if (argc < 3) {
         usage(argv[0]);
         return 1;
@@ -71,8 +149,6 @@ int main(int argc, char *argv[]) {
 
     IvOpts opts = {0};
     parse_opts(argc, argv, &opts);
-
-    char *flag = argv[1];
     char *filename;
     if (strcmp(flag, "-va") == 0 && argc >= 4) {
         int ri = next_arg(argc, argv, 2);
@@ -80,6 +156,63 @@ int main(int argc, char *argv[]) {
         filename = (fi >= 0) ? argv[fi] : argv[2];
     } else {
         filename = argv[2];
+    }
+
+    /* -diff: show backup (anterior) and file (actual) in our format, streaming */
+    if (strcmp(flag, "-diff") == 0) {
+        int fi = next_arg(argc, argv, 2);
+        if (fi < 0) { fprintf(stderr, "iv: -diff needs a file\n"); return 1; }
+        filename = argv[fi];
+        int unified = 0;
+        for (int i = 2; i < fi; i++)
+            if (strcmp(argv[i], "-u") == 0) { unified = 1; break; }
+        char bakname[512];
+        get_backup_path(filename, bakname, sizeof(bakname));
+        FILE *bak = fopen(bakname, "r");
+        if (unified) {
+            if (bak) {
+                fclose(bak);
+                char cmd[1024];
+                snprintf(cmd, sizeof(cmd), "diff -u \"%s\" \"%s\"", bakname, filename);
+                FILE *p = popen(cmd, "r");
+                if (p) {
+                    char buf[4096];
+                    while (fgets(buf, sizeof(buf), p)) fputs(buf, stdout);
+                    pclose(p);
+                }
+            } else {
+                fprintf(stdout, "--- %s\n+++ %s\n", bakname, filename);
+                stream_file_with_numbers(filename);
+            }
+        } else {
+            if (bak) {
+                fclose(bak);
+                fprintf(stdout, "--- %s (anterior)\n", bakname);
+                stream_file_with_numbers(bakname);
+                fprintf(stdout, "\n--- %s (actual)\n", filename);
+            } else {
+                fprintf(stdout, "--- %s (sin backup previo)\n", filename);
+            }
+            stream_file_with_numbers(filename);
+        }
+        return 0;
+    }
+
+    /* -u undo: restore from backup in /tmp (before loading file) */
+    if (strcmp(flag, "-u") == 0) {
+        char bakname[512];
+        get_backup_path(filename, bakname, sizeof(bakname));
+        FILE *src = fopen(bakname, "r");
+        if (!src) { fprintf(stderr, "iv: no backup found (%s)\n", bakname); return 1; }
+        FILE *dst = fopen(filename, "w");
+        if (!dst) { fclose(src); perror(filename); return 1; }
+        char buf[4096];
+        size_t n;
+        while ((n = fread(buf, 1, sizeof(buf), src)) > 0)
+            fwrite(buf, 1, n, dst);
+        fclose(src);
+        fclose(dst);
+        return 0;
     }
 
     FILE *f = fopen(filename, "r");
@@ -92,6 +225,7 @@ int main(int argc, char *argv[]) {
 
     char *lines[MAX_LINES];
     int count = 0;
+    int ret = 0;
     while (count < MAX_LINES) {
         char buffer[MAX_LEN];
         if (!fgets(buffer, sizeof(buffer), f)) break;
@@ -109,10 +243,11 @@ int main(int argc, char *argv[]) {
     /* -va view range (order: -va range file) */
     if (strcmp(flag, "-va") == 0) {
         int ri = next_arg(argc, argv, 2);
-        if (ri < 0) { fprintf(stderr, "Missing range\n"); goto done; }
+        if (ri < 0) { fprintf(stderr, "Missing range\n"); ret = 1; goto done; }
         int start, end;
         if (parse_range(argv[ri], count, &start, &end) < 0) {
             fprintf(stderr, "Invalid range\n");
+            ret = 1;
             goto done;
         }
         show_range(lines, count, start, end, opts.no_numbers);
@@ -125,8 +260,17 @@ int main(int argc, char *argv[]) {
         goto done;
     }
 
+    /* -n find line numbers for pattern */
+    if (strcmp(flag, "-n") == 0) {
+        int a = next_arg(argc, argv, 3);
+        if (a < 0) { fprintf(stderr, "Usage: -n file pattern\n"); ret = 1; goto done; }
+        find_line_numbers(lines, count, argv[a]);
+        goto done;
+    }
+
     /* -i / -insert */
     if (strcmp(flag, "-i") == 0 || strcmp(flag, "-insert") == 0) {
+        if (is_binary_file(filename)) { fprintf(stderr, "iv: refusing to edit binary file\n"); ret = 1; goto done; }
         int start = count + 1, end = count + 1;
         char *new_text = NULL;
         int a = next_arg(argc, argv, 3);
@@ -134,13 +278,13 @@ int main(int argc, char *argv[]) {
         if (a < 0) {
             new_text = strdup("");
         } else if (b < 0) {
-            new_text = strcmp(argv[a], "-") == 0 ? read_stdin() : strdup(argv[a]);
+            new_text = resolve_text(argv[a]);
         } else {
-            parse_range(argv[a], count, &start, &end);
-            new_text = strcmp(argv[b], "-") == 0 ? read_stdin() : strdup(argv[b]);
+            if (parse_range(argv[a], count, &start, &end) < 0) { fprintf(stderr, "Invalid range\n"); ret = 1; goto done; }
+            new_text = resolve_text(argv[b]);
         }
         if (!new_text) new_text = strdup("");
-        if (apply_patch(filename, lines, count, start, end, new_text, 1, &opts) == 0 && !opts.dry_run) {
+        if (apply_patch(filename, lines, count, start, end, new_text, 1, &opts) == 0 && !opts.dry_run && !opts.quiet) {
             printf("%s", new_text);
             if (new_text[strlen(new_text)-1] != '\n') putchar('\n');
         }
@@ -150,10 +294,11 @@ int main(int argc, char *argv[]) {
 
     /* -a append */
     if (strcmp(flag, "-a") == 0) {
+        if (is_binary_file(filename)) { fprintf(stderr, "iv: refusing to edit binary file\n"); ret = 1; goto done; }
         int a = next_arg(argc, argv, 3);
-        char *new_text = (a >= 0) ? (strcmp(argv[a], "-") == 0 ? read_stdin() : strdup(argv[a])) : strdup("");
+        char *new_text = (a >= 0) ? resolve_text(argv[a]) : strdup("");
         if (!new_text) new_text = strdup("");
-        if (apply_patch(filename, lines, count, count+1, count+1, new_text, 1, &opts) == 0 && !opts.dry_run) {
+        if (apply_patch(filename, lines, count, count+1, count+1, new_text, 1, &opts) == 0 && !opts.dry_run && !opts.quiet) {
             printf("%s", new_text);
             if (new_text[strlen(new_text)-1] != '\n') putchar('\n');
         }
@@ -161,8 +306,74 @@ int main(int argc, char *argv[]) {
         goto done;
     }
 
+    /* -p patch: uno o más archivos, [range], content. Sin range = append. */
+    if (strcmp(flag, "-p") == 0) {
+        /* Collect non-flag args from index 2 */
+        int args[64], nargs = 0;
+        for (int i = 2; i < argc; i++) {
+            if (strcmp(argv[i], "--dry-run") && strcmp(argv[i], "--no-backup") &&
+                strcmp(argv[i], "--no-numbers") && strcmp(argv[i], "-g") &&
+                strcmp(argv[i], "-E") && strcmp(argv[i], "--regex") &&
+                strcmp(argv[i], "-q") && strcmp(argv[i], "-z") && strcmp(argv[i], "-u")) {
+                if (nargs < 64) args[nargs++] = i;
+            }
+        }
+        if (nargs == 0) { fprintf(stderr, "iv: -p needs at least file and content\n"); ret = 1; goto done; }
+        char *content_arg = argv[args[nargs-1]];
+        char *new_text = strcmp(content_arg, "-") == 0 ? read_stdin() : resolve_text(content_arg);
+        if (!new_text) new_text = strdup("");
+        int start = 0, end = 0;
+        int has_range = 0;
+        int nfiles = nargs - 1;
+        if (nargs >= 2) {
+            int s, e;
+            if (parse_range(argv[args[nargs-2]], 10000, &s, &e) == 0) {
+                start = s; end = e;
+                has_range = 1;
+                nfiles = nargs - 2;
+            }
+        }
+        if (nfiles == 0) { fprintf(stderr, "iv: -p needs at least one file\n"); free(new_text); ret = 1; goto done; }
+        int use_replace = has_range && (start != end);
+        int mode = use_replace ? 3 : 1;
+        /* Process each file */
+        for (int f = 0; f < nfiles; f++) {
+            char *fname = argv[args[f]];
+            if (is_binary_file(fname)) { fprintf(stderr, "iv: refusing to edit binary file %s\n", fname); ret = 1; continue; }
+            FILE *fp = fopen(fname, "r");
+            if (!fp) { fp = fopen(fname, "w"); if (fp) fclose(fp); fp = fopen(fname, "r"); }
+            if (!fp) { perror(fname); continue; }
+            char *flines[MAX_LINES];
+            int fcount = 0;
+            char fbuf[MAX_LEN];
+            while (fcount < MAX_LINES && fgets(fbuf, sizeof(fbuf), fp)) {
+                flines[fcount++] = strdup(fbuf);
+            }
+            fclose(fp);
+            int fstart, fend;
+            if (!has_range) {
+                fstart = fcount + 1;
+                fend = fcount + 1;
+            } else {
+                fstart = start;
+                fend = end;
+                if (fstart > fcount && !use_replace) fstart = fcount + 1;
+                if (fend > fcount) fend = use_replace ? fcount : fcount + 1;
+                if (fstart < 1) fstart = 1;
+            }
+            if (apply_patch(fname, flines, fcount, fstart, fend, new_text, mode, &opts) == 0 && !opts.dry_run && !opts.quiet) {
+                printf("%s", new_text);
+                if (new_text[0] && new_text[strlen(new_text)-1] != '\n') putchar('\n');
+            }
+            for (int i = 0; i < fcount; i++) free(flines[i]);
+        }
+        free(new_text);
+        goto done;
+    }
+
     /* -d / -delete */
     if (strcmp(flag, "-d") == 0 || strcmp(flag, "-delete") == 0) {
+        if (is_binary_file(filename)) { fprintf(stderr, "iv: refusing to edit binary file\n"); ret = 1; goto done; }
         int start = 1, end = count;
         int a = next_arg(argc, argv, 3);
         if (a >= 0) parse_range(argv[a], count, &start, &end);
@@ -172,6 +383,7 @@ int main(int argc, char *argv[]) {
 
     /* -r / -replace */
     if (strcmp(flag, "-r") == 0 || strcmp(flag, "-replace") == 0) {
+        if (is_binary_file(filename)) { fprintf(stderr, "iv: refusing to edit binary file\n"); ret = 1; goto done; }
         int start = 1, end = 1;
         char *new_text = NULL;
         int a = next_arg(argc, argv, 3);
@@ -179,13 +391,13 @@ int main(int argc, char *argv[]) {
         if (a < 0) {
             new_text = strdup("");
         } else if (b < 0) {
-            new_text = strcmp(argv[a], "-") == 0 ? read_stdin() : strdup(argv[a]);
+            new_text = resolve_text(argv[a]);
         } else {
-            parse_range(argv[a], count, &start, &end);
-            new_text = strcmp(argv[b], "-") == 0 ? read_stdin() : strdup(argv[b]);
+            if (parse_range(argv[a], count, &start, &end) < 0) { fprintf(stderr, "Invalid range\n"); ret = 1; goto done; }
+            new_text = resolve_text(argv[b]);
         }
         if (!new_text) new_text = strdup("");
-        if (apply_patch(filename, lines, count, start, end, new_text, 3, &opts) == 0 && !opts.dry_run) {
+        if (apply_patch(filename, lines, count, start, end, new_text, 3, &opts) == 0 && !opts.dry_run && !opts.quiet) {
             printf("%s", new_text);
             if (new_text[strlen(new_text)-1] != '\n') putchar('\n');
         }
@@ -195,12 +407,19 @@ int main(int argc, char *argv[]) {
 
     /* -s search/replace */
     if (strcmp(flag, "-s") == 0) {
+        if (is_binary_file(filename)) { fprintf(stderr, "iv: refusing to edit binary file\n"); ret = 1; goto done; }
         int a = next_arg(argc, argv, 3);
         int b = (a >= 0) ? next_arg(argc, argv, a + 1) : -1;
-        if (a < 0 || b < 0) { fprintf(stderr, "Usage: -s file pattern replacement\n"); goto done; }
+        if (a < 0 || b < 0) { fprintf(stderr, "Usage: -s file pattern replacement\n"); ret = 1; goto done; }
         char *pattern = argv[a];
         char *replacement = argv[b];
-        int n = search_replace(lines, count, pattern, replacement, opts.global_replace);
+        int n;
+        if (opts.use_regex) {
+            n = search_replace_regex(lines, count, pattern, replacement, opts.global_replace);
+            if (n < 0) { fprintf(stderr, "iv: invalid regex pattern\n"); ret = 1; goto done; }
+        } else {
+            n = search_replace(lines, count, pattern, replacement, opts.global_replace);
+        }
         if (!opts.dry_run && n > 0) {
             if (!opts.no_backup) backup_file(filename);
             write_lines_to_file(filename, lines, count);
@@ -211,8 +430,9 @@ int main(int argc, char *argv[]) {
 
     fprintf(stderr, "Unknown flag: %s\n", flag);
     usage(argv[0]);
+    ret = 1;
 
 done:
     for (int i = 0; i < count; i++) free(lines[i]);
-    return 0;
+    return ret;
 }
