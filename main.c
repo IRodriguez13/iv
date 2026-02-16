@@ -11,23 +11,24 @@
 
 static void usage(const char *prog) {
     fprintf(stderr, "Usage:\n");
+    fprintf(stderr, "  %s -h|--help\n", prog);
+    fprintf(stderr, "  %s -V|--version\n", prog);
     fprintf(stderr, "  %s -v [--no-numbers] file\n", prog);
     fprintf(stderr, "  %s -va [--no-numbers] start-end file\n", prog);
     fprintf(stderr, "  %s -wc file\n", prog);
     fprintf(stderr, "  %s -n file \"pattern\"  (line numbers where pattern appears)\n", prog);
     fprintf(stderr, "  %s -u file  (undo: restore from .bak)\n", prog);
     fprintf(stderr, "  %s -diff [-u] file  (anterior .bak vs actual; -u = unified diff)\n", prog);
-    fprintf(stderr, "  %s -i|-insert file [start-end] \"text\" [--dry-run] [--no-backup]\n", prog);
-    fprintf(stderr, "  %s -a file \"text\"   (append)\n", prog);
-    fprintf(stderr, "  %s -p file [file...] [range] content  (patch, múltiples archivos)\n", prog);
-    fprintf(stderr, "  %s -s file pattern replacement [-E] [-g]  (-E = regex)\n", prog);
-    fprintf(stderr, "  %s -l [file]  (listar backups, IV_BACKUP_DIR)\n", prog);
+    fprintf(stderr, "  %s -i|-insert file [start-end] \"text\" [-q] [--dry-run] [--no-backup]\n", prog);
+    fprintf(stderr, "  %s -a file \"text\" [-q]  (append)\n", prog);
+    fprintf(stderr, "  %s -p file [file...] [range] content [-q]  (patch, múltiples archivos)\n", prog);
+    fprintf(stderr, "  %s -s file pattern replacement [-E] [-g] [-q] [--dry-run] [--no-backup]\n", prog);
+    fprintf(stderr, "  %s -l [file]  (listar backups)\n", prog);
     fprintf(stderr, "  %s -z [file]  (limpiar backups antiguos)\n", prog);
     fprintf(stderr, "  %s -d|-delete file [start-end] [--dry-run] [--no-backup]\n", prog);
-    fprintf(stderr, "  %s -r|-replace file [start-end] \"text\" [--dry-run] [--no-backup]\n", prog);
-    fprintf(stderr, "  %s -s file pattern replacement [-E] [-g] [--dry-run] [--no-backup]\n", prog);
-    fprintf(stderr, "\n  Text: \"-\" = stdin, path to file = file content, else literal.\n");
-    fprintf(stderr, "  Ranges: 1-5, -3--1, -5-\n");
+    fprintf(stderr, "  %s -r|-replace file [start-end] \"text\" [-q] [--dry-run] [--no-backup]\n", prog);
+    fprintf(stderr, "\n  Text: \"-\" = stdin, path = file content, else literal. -q = no tee output.\n");
+    fprintf(stderr, "  Ranges: 1-5, -3--1, -5-. Backups: IV_BACKUP_DIR (default /tmp).\n");
 }
 
 static void parse_opts(int argc, char *argv[], IvOpts *opts) {
@@ -127,6 +128,10 @@ int main(int argc, char *argv[]) {
     }
 
     char *flag = argv[1];
+    if (strcmp(flag, "-h") == 0 || strcmp(flag, "--help") == 0) {
+        usage(argv[0]);
+        return 0;
+    }
     if (strcmp(flag, "--version") == 0 || strcmp(flag, "-V") == 0) {
         printf("iv %s\n", IV_VERSION);
         return 0;
