@@ -6,8 +6,8 @@
 #include <string.h>
 #include <stddef.h>
 
-#define MAX_LINES 4096
 #define MAX_LEN   1024
+#define INITIAL_LINES 256
 
 #define IV_VERSION "0.0.1"
 
@@ -19,6 +19,7 @@ typedef struct {
     int global_replace;  /* -g for search/replace all matches */
     int use_regex;      /* -E for regex in search/replace */
     int quiet;          /* -q suppress tee-like output */
+    int to_stdout;      /* --stdout: write result to stdout, don't modify file */
 } IvOpts;
 
 /* Parse range string (e.g. "1-5", "-3--1", "-5-") into start,end (1-based).
@@ -47,6 +48,7 @@ int search_replace_regex(char *lines[], int count, const char *pattern,
                          const char *replacement, int global);
 
 void write_lines_to_file(const char *filename, char *lines[], int count);
+void write_lines_to_stream(FILE *f, char *lines[], int count);
 
 /* Read stdin into dynamically allocated string. Caller frees. */
 char *read_stdin(void);

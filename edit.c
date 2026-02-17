@@ -58,14 +58,16 @@ void write_with_escapes(FILE *f, const char *text) {
 int apply_patch(const char *filename, char *lines[], int count,
                 int start, int end, const char *new_text, int mode,
                 const IvOpts *opts) {
-    int do_backup = !opts->no_backup;
+    int do_backup = !opts->no_backup && !opts->to_stdout;
     int dry = opts->dry_run;
 
     if (do_backup && !dry)
         backup_file(filename);
 
-    FILE *f = dry ? NULL : fopen(filename, "w");
-    if (!dry && !f) { perror("Could not write file"); return -1; }
+    FILE *f;
+    if (dry) f = NULL;
+    else if (opts->to_stdout) f = stdout;
+    else { f = fopen(filename, "w"); if (!f) { perror("Could not write file"); return -1; } }
 
     int wrote_new = 0;
 
@@ -91,7 +93,7 @@ int apply_patch(const char *filename, char *lines[], int count,
         wrote_new = 1;
     }
 
-    if (f) fclose(f);
+    if (f && f != stdout) fclose(f);
     return wrote_new ? 0 : -1;
 }
 
@@ -230,6 +232,11 @@ void write_lines_to_file(const char *filename, char *lines[], int count) {
     for (int i = 0; i < count; i++)
         fputs(lines[i], f);
     fclose(f);
+}
+
+void write_lines_to_stream(FILE *f, char *lines[], int count) {
+    for (int i = 0; i < count; i++)
+        fputs(lines[i], f);
 }
 
 void list_backups(const char *filter) {

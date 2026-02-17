@@ -38,6 +38,7 @@ make clean
 | `iv -d file [start-end]` | Elimina líneas (alias: `-delete`) |
 | `iv -r file [start-end] "texto"` | Reemplaza líneas (alias: `-replace`) |
 | `iv -s file patrón reemplazo` | Sustituye (literal) |
+| `iv -s file patrón reemplazo -e pat2 repl2` | Múltiples sustituciones (como sed -e) |
 | `iv -s file patrón reemplazo -E` | Sustituye con regex |
 | `iv -s file patrón reemplazo -g` | Sustituye todas las ocurrencias |
 
@@ -49,6 +50,7 @@ make clean
 | `--no-backup` | No crea archivo `.bak` antes de editar |
 | `--no-numbers` | Salida sin números de línea (solo con `-v` y `-va`) |
 | `-q` | Suprime la salida tipo tee en `-i`, `-a`, `-r`, `-p` |
+| `--stdout` | Escribe resultado a stdout sin modificar el archivo (composable en pipelines) |
 
 ## Rangos
 
@@ -80,6 +82,8 @@ iv -p main.c 5 snippet.c                   # insertar en línea 5
 iv -p main.c 1-3 plantilla.txt             # reemplazar líneas 1-3
 iv -p f1.c f2.c snippet.c                 # parchear múltiples archivos
 iv -s file "[0-9]+" "X" -E                 # regex
+iv -s file "a" "b" -e "c" "d"             # múltiples sustituciones
+cat file | iv -s - "old" "new" --stdout    # pipeline sin modificar archivo
 ```
 
 ## Secuencias de escape
@@ -102,6 +106,14 @@ iv -i file "línea1\nlínea2\nlínea3"
 ## Comportamiento tipo tee
 
 `-insert`, `-replace`, `-a` y `-p` escriben en stdout el texto añadido, de forma similar a `tee`. Usa `-q` para suprimir esta salida.
+
+## Pipelines con --stdout
+
+Con `--stdout`, el resultado se escribe a stdout sin modificar el archivo. Permite encadenar operaciones:
+
+```bash
+iv -s file "a" "b" --stdout | iv -s - "b" "c" --stdout
+```
 
 ## Estructura del código
 
@@ -151,5 +163,5 @@ range.c   — parse_range
 
 ## Límites
 
-- Máximo 4096 líneas por archivo
+- Líneas: array dinámico (sin límite fijo)
 - Máximo 1024 caracteres por línea
