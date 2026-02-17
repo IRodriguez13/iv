@@ -225,30 +225,24 @@ int main(int argc, char *argv[]) {
         char bakname[512];
         get_backup_path(filename, bakname, sizeof(bakname));
         FILE *bak = fopen(bakname, "r");
+        if (!bak) {
+            fprintf(stderr, "iv: no backup found for %s\n", filename);
+            return 0;
+        }
+        fclose(bak);
         if (unified) {
-            if (bak) {
-                fclose(bak);
-                char cmd[1024];
-                snprintf(cmd, sizeof(cmd), "diff -u \"%s\" \"%s\"", bakname, filename);
-                FILE *p = popen(cmd, "r");
-                if (p) {
-                    char buf[4096];
-                    while (fgets(buf, sizeof(buf), p)) fputs(buf, stdout);
-                    pclose(p);
-                }
-            } else {
-                fprintf(stdout, "--- %s\n+++ %s\n", bakname, filename);
-                stream_file_with_numbers(filename);
+            char cmd[1024];
+            snprintf(cmd, sizeof(cmd), "diff -u \"%s\" \"%s\"", bakname, filename);
+            FILE *p = popen(cmd, "r");
+            if (p) {
+                char buf[4096];
+                while (fgets(buf, sizeof(buf), p)) fputs(buf, stdout);
+                pclose(p);
             }
         } else {
-            if (bak) {
-                fclose(bak);
-                fprintf(stdout, "--- %s (anterior)\n", bakname);
-                stream_file_with_numbers(bakname);
-                fprintf(stdout, "\n--- %s (actual)\n", filename);
-            } else {
-                fprintf(stdout, "--- %s (sin backup previo)\n", filename);
-            }
+            fprintf(stdout, "--- %s (previous)\n", bakname);
+            stream_file_with_numbers(bakname);
+            fprintf(stdout, "\n--- %s (current)\n", filename);
             stream_file_with_numbers(filename);
         }
         return 0;

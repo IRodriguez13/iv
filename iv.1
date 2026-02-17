@@ -1,0 +1,243 @@
+.TH IV 1 "February 2026" "iv 0.0.1" "User Commands"
+.SH NAME
+iv \- line-oriented text editor for scripts and pipes
+.SH SYNOPSIS
+.B iv
+.B \-v
+.RI [ \-\-no\-numbers ]
+.IR file
+.PP
+.B iv
+.B \-va
+.RI [ \-\-no\-numbers ]
+.IR start\-end
+.IR file
+.PP
+.B iv
+.B \-wc
+.IR file
+.PP
+.B iv
+.B \-n
+.IR file
+.IR pattern
+.RI [ \-\-json ]
+.PP
+.B iv
+.B \-u
+.IR file
+.PP
+.B iv
+.B \-diff
+.RI [ \-u ]
+.IR file
+.PP
+.B iv
+.B \-l
+.RI [ file ]
+.PP
+.B iv
+.B \-z
+.RI [ file ]
+.PP
+.B iv
+.BR "\-i," " \-\-insert"
+.IR file
+.RI [ start\-end ]
+.IR "text"
+.RI [ \-q ]
+.RI [ \-\-dry\-run ]
+.RI [ \-\-no\-backup ]
+.PP
+.B iv
+.B \-a
+.IR file
+.IR "text"
+.RI [ \-q ]
+.PP
+.B iv
+.B \-p
+.IR file
+.RI [ file... ]
+.RI [ range ]
+.IR content
+.RI [ \-q ]
+.PP
+.B iv
+.BR "\-d," " \-\-delete"
+.IR file
+.RI [ start\-end ]
+.RI [ \-m
+.IR pattern ]
+.RI [ \-\-dry\-run ]
+.RI [ \-\-no\-backup ]
+.PP
+.B iv
+.BR "\-r," " \-\-replace"
+.IR file
+.RI [ start\-end ]
+.IR "text"
+.RI [ \-m
+.IR pattern ]
+.RI [ \-q ]
+.RI [ \-\-dry\-run ]
+.RI [ \-\-no\-backup ]
+.PP
+.B iv
+.B \-s
+.IR file
+.IR pattern
+.IR replacement
+.RI [ \-e
+.IR pattern
+.IR replacement ]
+.RI [ \-m
+.IR pattern ]
+.RI [ \-F
+.IR delim
+.IR N
+.IR value ]
+.RI [ \-E ]
+.RI [ \-g ]
+.RI [ \-q ]
+.RI [ \-\-dry\-run ]
+.RI [ \-\-no\-backup ]
+.PP
+.B iv
+.BR "\-h," " \-\-help"
+.PP
+.B iv
+.BR "\-V," " \-\-version"
+.SH DESCRIPTION
+.B iv
+is a line-oriented text editor for the command line, inspired by ed/sed.
+Designed for composition with pipes and scripts. No external dependencies.
+.PP
+Text arguments accept three forms:
+.RS
+.IP \(bu 2
+.B \-
+reads from stdin
+.IP \(bu 2
+path to existing file
+reads file content
+.IP \(bu 2
+any other text
+used as literal
+.RE
+.SH VIEW COMMANDS
+.TP
+.B \-v
+View entire file with line numbers.
+.TP
+.B \-va
+View line range. Order: \fB\-va\fR \fIstart\-end\fR \fIfile\fR.
+.TP
+.B \-wc
+Count lines.
+.TP
+.B \-n
+Print line numbers where \fIpattern\fR appears.
+.B \-\-json
+outputs {\"lines\":[1,5,7]} for jq/Python integration.
+.TP
+.B \-u
+Undo: restore file from backup.
+.TP
+.B \-diff
+Compare backup vs current file. With
+.B \-u
+uses unified diff format.
+Prints "no backup found" and exits if no backup exists.
+.TP
+.B \-l
+List backups in IV_BACKUP_DIR. Optional \fIfile\fR filters by filename.
+.TP
+.B \-z
+Remove backups. Optional \fIfile\fR removes only that file's backup.
+.SH EDIT COMMANDS
+.TP
+.B \-i
+.B \-\-insert
+Insert text. Without range, appends at end.
+.TP
+.B \-a
+Append text at end of file.
+.TP
+.B \-p
+Patch one or more files. Optional range for replace mode.
+.TP
+.B \-d
+.B \-\-delete
+Delete lines. With
+.B \-m
+\fIpattern\fR, delete only matching lines.
+.TP
+.B \-r
+.B \-\-replace
+Replace lines. With
+.B \-m
+\fIpattern\fR, replace only matching lines.
+.TP
+.B \-s
+Search and replace.
+.B \-e
+adds more replacements (like sed \-e).
+.B \-m
+\fIpattern\fR restricts to lines containing pattern.
+.B \-F
+\fIdelim\fR \fIN\fR \fIvalue\fR replaces field N in CSV/TSV.
+.B \-E
+enables regex. \fB\-g\fR replaces all matches per line.
+.SH OPTIONS
+.TP
+.B \-\-dry\-run
+Show what would be done without modifying files.
+.TP
+.B \-\-no\-backup
+Do not create backup before editing.
+.TP
+.B \-\-no\-numbers
+Omit line numbers in \-v and \-va output.
+.TP
+.B \-q
+Suppress tee-like output (inserted text) in \-i, \-a, \-r, \-p.
+.TP
+.B \-\-stdout
+Write result to stdout instead of modifying file. Composable in pipelines.
+.SH RANGES
+1-based. Examples:
+.RS
+.IP \fB1\-5\fR 8
+lines 1 through 5
+.IP \fB5\fR 8
+line 5 only
+.IP \fB\-3\fR 8
+third line from end
+.IP \fB\-3\-\-1\fR 8
+last three lines
+.IP \fB\-5\-\fR 8
+last five lines
+.IP \fB2\-\fR 8
+from line 2 to end
+.RE
+.SH ESCAPE SEQUENCES
+In insert/replace text: \fB\\n\fR newline, \fB\\t\fR tab, \fB\\\\\fR backslash, \fB\\r\fR carriage return.
+.SH ENVIRONMENT
+.TP
+.B IV_BACKUP_DIR
+Directory for backups (default: /tmp). Backups are stored as
+.IR iv_<filename>.bak .
+.SH EXIT STATUS
+.TP
+.B 0
+Success
+.TP
+.B 1
+Error (binary file, invalid range, usage error)
+.SH AUTHOR
+Iván Ezequiel Rodriguez
+.SH SEE ALSO
+.BR ed (1),
+.BR sed (1),
+.BR diff (1)
