@@ -21,6 +21,7 @@ make clean
 | `iv -va start-end file` | Muestra el rango de líneas indicado |
 | `iv -wc file` | Cuenta las líneas del archivo |
 | `iv -n file "pattern"` | Números de línea donde aparece el patrón |
+| `iv -n file "pattern" --json` | Salida JSON: `{"lines":[1,5,7]}` (para jq, Python, etc.) |
 | `iv -u file` | Deshace: restaura desde backup en `/tmp` |
 | `iv -diff [-u] file` | Muestra backup vs actual; `-u` = diff unificado |
 | `iv -l [file]` | Lista backups en el directorio de backup |
@@ -36,8 +37,12 @@ make clean
 | `iv -a file "texto"` | Añade texto al final del archivo |
 | `iv -p file [file...] [range] content` | Parchea uno o más archivos; range opcional |
 | `iv -d file [start-end]` | Elimina líneas (alias: `-delete`) |
+| `iv -d file -m "pattern"` | Elimina solo líneas que coinciden con el patrón |
 | `iv -r file [start-end] "texto"` | Reemplaza líneas (alias: `-replace`) |
+| `iv -r file -m "pattern" "texto"` | Reemplaza solo líneas que coinciden |
 | `iv -s file patrón reemplazo` | Sustituye (literal) |
+| `iv -s file patrón reemplazo -m "filter"` | Sustituye solo en líneas que contienen "filter" |
+| `iv -s file -F ',' 2 "X"` | Sustituye campo 2 con "X" (CSV/TSV) |
 | `iv -s file patrón reemplazo -e pat2 repl2` | Múltiples sustituciones (como sed -e) |
 | `iv -s file patrón reemplazo -E` | Sustituye con regex |
 | `iv -s file patrón reemplazo -g` | Sustituye todas las ocurrencias |
@@ -164,4 +169,4 @@ range.c   — parse_range
 ## Límites
 
 - Líneas: array dinámico (sin límite fijo)
-- Máximo 1024 caracteres por línea
+- Longitud de línea: sin límite (usa `getline` POSIX)

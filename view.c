@@ -24,22 +24,34 @@ int wc_lines(char *lines[], int count) {
     return count;
 }
 
-void find_line_numbers(char *lines[], int count, const char *pattern) {
+void find_line_numbers(char *lines[], int count, const char *pattern, int json) {
     if (!pattern || !*pattern) return;
+    if (json) printf("{\"lines\":[");
+    int first = 1;
     for (int i = 0; i < count; i++) {
-        if (strstr(lines[i], pattern))
-            printf("%d\n", i + 1);
+        if (strstr(lines[i], pattern)) {
+            if (json) {
+                if (!first) printf(",");
+                printf("%d", i + 1);
+                first = 0;
+            } else {
+                printf("%d\n", i + 1);
+            }
+        }
     }
+    if (json) printf("]}\n");
 }
 
 int stream_file_with_numbers(const char *path) {
     FILE *f = fopen(path, "r");
     if (!f) return -1;
-    char buf[MAX_LEN];
+    char *line = NULL;
+    size_t cap = 0;
     int n = 0;
-    while (fgets(buf, sizeof(buf), f)) {
-        printf("%4d | %s", ++n, buf);
+    while (getline(&line, &cap, f) != -1) {
+        printf("%4d | %s", ++n, line);
     }
+    free(line);
     fclose(f);
     return 0;
 }

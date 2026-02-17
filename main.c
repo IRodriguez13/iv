@@ -16,18 +16,18 @@ static void usage(const char *prog) {
     fprintf(stderr, "  %s -v [--no-numbers] file\n", prog);
     fprintf(stderr, "  %s -va [--no-numbers] start-end file\n", prog);
     fprintf(stderr, "  %s -wc file\n", prog);
-    fprintf(stderr, "  %s -n file \"pattern\"  (line numbers where pattern appears)\n", prog);
+    fprintf(stderr, "  %s -n file \"pattern\" [--json]  (line numbers; --json for {\"lines\":[...]})\n", prog);
     fprintf(stderr, "  %s -u file  (undo: restore from .bak)\n", prog);
     fprintf(stderr, "  %s -diff [-u] file  (anterior .bak vs actual; -u = unified diff)\n", prog);
     fprintf(stderr, "  %s -i|-insert file [start-end] \"text\" [-q] [--dry-run] [--no-backup]\n", prog);
     fprintf(stderr, "  %s -a file \"text\" [-q]  (append)\n", prog);
     fprintf(stderr, "  %s -p file [file...] [range] content [-q]  (patch, múltiples archivos)\n", prog);
-    fprintf(stderr, "  %s -s file pattern replacement [-e pattern replacement...] [-E] [-g] [-q] [--dry-run] [--no-backup]\n", prog);
+    fprintf(stderr, "  %s -s file pattern replacement [-e ...] [-m pattern] [-F delim N value] [-E] [-g] [-q] [--dry-run] [--no-backup]\n", prog);
     fprintf(stderr, "  %s -l [file]  (listar backups)\n", prog);
     fprintf(stderr, "  %s -z [file]  (limpiar backups antiguos)\n", prog);
-    fprintf(stderr, "  %s -d|-delete file [start-end] [--dry-run] [--no-backup]\n", prog);
-    fprintf(stderr, "  %s -r|-replace file [start-end] \"text\" [-q] [--dry-run] [--no-backup]\n", prog);
-    fprintf(stderr, "\n  -e adds another search/replace (like sed -e). --stdout = write to stdout, don't modify file.\n");
+    fprintf(stderr, "  %s -d|-delete file [start-end] [-m pattern] [--dry-run] [--no-backup]\n", prog);
+    fprintf(stderr, "  %s -r|-replace file [start-end] \"text\" [-m pattern] [-q] [--dry-run] [--no-backup]\n", prog);
+    fprintf(stderr, "\n  -e = more replacements. -m = only lines matching pattern. -F delim N = field N (CSV). --stdout = no file write.\n");
     fprintf(stderr, "  Text: \"-\" = stdin, path = file content, else literal. -q = no tee output.\n");
     fprintf(stderr, "  Ranges: 1-5, -3--1, -5-. Backups: IV_BACKUP_DIR (default /tmp).\n");
 }
@@ -40,6 +40,10 @@ static void parse_opts(int argc, char *argv[], IvOpts *opts) {
     opts->use_regex = 0;
     opts->quiet = 0;
     opts->to_stdout = 0;
+    opts->json = 0;
+    opts->multimatch = NULL;
+    opts->field_delim = 0;
+    opts->field_num = 0;
     for (int i = 0; i < argc; i++) {
         if (strcmp(argv[i], "--dry-run") == 0) opts->dry_run = 1;
         else if (strcmp(argv[i], "--no-backup") == 0) opts->no_backup = 1;
@@ -48,6 +52,13 @@ static void parse_opts(int argc, char *argv[], IvOpts *opts) {
         else if (strcmp(argv[i], "-E") == 0 || strcmp(argv[i], "--regex") == 0) opts->use_regex = 1;
         else if (strcmp(argv[i], "-q") == 0) opts->quiet = 1;
         else if (strcmp(argv[i], "--stdout") == 0) opts->to_stdout = 1;
+        else if (strcmp(argv[i], "--json") == 0) opts->json = 1;
+        else if (strcmp(argv[i], "-m") == 0 && i + 1 < argc) opts->multimatch = argv[++i];
+        else if (strcmp(argv[i], "-F") == 0 && i + 2 < argc) {
+            opts->field_delim = argv[i+1][0];
+            opts->field_num = atoi(argv[i+2]);
+            i += 2;
+        }
     }
 }
 
@@ -58,7 +69,8 @@ static int next_arg(int argc, char *argv[], int i) {
             strcmp(argv[i], "--no-numbers") && strcmp(argv[i], "-g") &&
             strcmp(argv[i], "-E") && strcmp(argv[i], "--regex") &&
             strcmp(argv[i], "-q") && strcmp(argv[i], "-z") && strcmp(argv[i], "-u") &&
-            strcmp(argv[i], "-e") && strcmp(argv[i], "--stdout"))
+            strcmp(argv[i], "-e") && strcmp(argv[i], "--stdout") &&
+            strcmp(argv[i], "-m") && strcmp(argv[i], "-F") && strcmp(argv[i], "--json"))
             return i;
     }
     return -1;
@@ -114,33 +126,37 @@ char *read_file_content(const char *path) {
     return buf;
 }
 
-/* Load lines from file into dynamically allocated array. Returns array (caller frees),
+/* Load lines from file using getline (no line length limit). Returns array (caller frees),
  * sets *out_count. Returns NULL on error. */
 static char **load_lines(FILE *f, int *out_count) {
     size_t cap = INITIAL_LINES;
     char **lines = malloc(cap * sizeof(char *));
     if (!lines) return NULL;
     int count = 0;
-    char buffer[MAX_LEN];
-    while (fgets(buffer, sizeof(buffer), f)) {
+    char *line = NULL;
+    size_t linecap = 0;
+    while (getline(&line, &linecap, f) != -1) {
         if ((size_t)count >= cap) {
             cap *= 2;
             char **tmp = realloc(lines, cap * sizeof(char *));
             if (!tmp) {
                 for (int i = 0; i < count; i++) free(lines[i]);
                 free(lines);
+                free(line);
                 return NULL;
             }
             lines = tmp;
         }
-        lines[count] = strdup(buffer);
+        lines[count] = strdup(line);
         if (!lines[count]) {
             for (int i = 0; i < count; i++) free(lines[i]);
             free(lines);
+            free(line);
             return NULL;
         }
         count++;
     }
+    free(line);
     *out_count = count;
     return lines;
 }
@@ -307,8 +323,8 @@ int main(int argc, char *argv[]) {
     /* -n find line numbers for pattern */
     if (strcmp(flag, "-n") == 0) {
         int a = next_arg(argc, argv, 3);
-        if (a < 0) { fprintf(stderr, "Usage: -n file pattern\n"); ret = 1; goto done; }
-        find_line_numbers(lines, count, argv[a]);
+        if (a < 0) { fprintf(stderr, "Usage: -n file pattern [--json]\n"); ret = 1; goto done; }
+        find_line_numbers(lines, count, argv[a], opts.json);
         goto done;
     }
 
@@ -359,7 +375,8 @@ int main(int argc, char *argv[]) {
                 strcmp(argv[i], "--no-numbers") && strcmp(argv[i], "-g") &&
                 strcmp(argv[i], "-E") && strcmp(argv[i], "--regex") &&
                 strcmp(argv[i], "-q") && strcmp(argv[i], "-z") && strcmp(argv[i], "-u") &&
-                strcmp(argv[i], "-e") && strcmp(argv[i], "--stdout")) {
+                strcmp(argv[i], "-e") && strcmp(argv[i], "--stdout") &&
+                strcmp(argv[i], "-m") && strcmp(argv[i], "-F") && strcmp(argv[i], "--json")) {
                 if (nargs < 64) args[nargs++] = i;
             }
         }
@@ -414,17 +431,36 @@ int main(int argc, char *argv[]) {
         goto done;
     }
 
-    /* -d / -delete */
+    /* -d / -delete; -m = delete only lines matching pattern */
     if (strcmp(flag, "-d") == 0 || strcmp(flag, "-delete") == 0) {
         if (is_binary_file(filename)) { fprintf(stderr, "iv: refusing to edit binary file\n"); ret = 1; goto done; }
         int start = 1, end = count;
         int a = next_arg(argc, argv, 3);
-        if (a >= 0) parse_range(argv[a], count, &start, &end);
-        apply_patch(filename, lines, count, start, end, "", 2, &opts);
+        if (a >= 0 && !opts.multimatch) parse_range(argv[a], count, &start, &end);
+        if (opts.multimatch) {
+            int new_count = 0;
+            for (int i = 0; i < count; i++) {
+                if (!strstr(lines[i], opts.multimatch)) {
+                    if (new_count != i) lines[new_count] = lines[i];
+                    new_count++;
+                } else {
+                    free(lines[i]);
+                }
+            }
+            count = new_count;
+            if (!opts.dry_run && !opts.to_stdout) {
+                if (!opts.no_backup) backup_file(filename);
+                write_lines_to_file(filename, lines, count);
+            } else if (opts.to_stdout) {
+                write_lines_to_stream(stdout, lines, count);
+            }
+        } else {
+            apply_patch(filename, lines, count, start, end, "", 2, &opts);
+        }
         goto done;
     }
 
-    /* -r / -replace */
+    /* -r / -replace; -m = replace only lines matching pattern */
     if (strcmp(flag, "-r") == 0 || strcmp(flag, "-replace") == 0) {
         if (is_binary_file(filename)) { fprintf(stderr, "iv: refusing to edit binary file\n"); ret = 1; goto done; }
         int start = 1, end = 1;
@@ -436,11 +472,30 @@ int main(int argc, char *argv[]) {
         } else if (b < 0) {
             new_text = resolve_text(argv[a]);
         } else {
-            if (parse_range(argv[a], count, &start, &end) < 0) { fprintf(stderr, "Invalid range\n"); ret = 1; goto done; }
+            if (!opts.multimatch && parse_range(argv[a], count, &start, &end) < 0) { fprintf(stderr, "Invalid range\n"); ret = 1; goto done; }
             new_text = resolve_text(argv[b]);
         }
         if (!new_text) new_text = strdup("");
-        if (apply_patch(filename, lines, count, start, end, new_text, 3, &opts) == 0 && !opts.dry_run && !opts.quiet) {
+        if (opts.multimatch) {
+            for (int i = 0; i < count; i++) {
+                if (strstr(lines[i], opts.multimatch)) {
+                    free(lines[i]);
+                    size_t n = strlen(new_text);
+                    lines[i] = malloc(n + 2);
+                    if (lines[i]) {
+                        strcpy(lines[i], new_text);
+                        if (n == 0 || new_text[n-1] != '\n') strcat(lines[i], "\n");
+                    } else lines[i] = strdup("\n");
+                }
+            }
+            if (!opts.dry_run && !opts.to_stdout) {
+                if (!opts.no_backup) backup_file(filename);
+                write_lines_to_file(filename, lines, count);
+            } else if (opts.to_stdout) {
+                write_lines_to_stream(stdout, lines, count);
+            }
+            if (!opts.quiet) { printf("%s", new_text); if (new_text[strlen(new_text)-1] != '\n') putchar('\n'); }
+        } else if (apply_patch(filename, lines, count, start, end, new_text, 3, &opts) == 0 && !opts.dry_run && !opts.quiet) {
             printf("%s", new_text);
             if (new_text[strlen(new_text)-1] != '\n') putchar('\n');
         }
@@ -448,31 +503,45 @@ int main(int argc, char *argv[]) {
         goto done;
     }
 
-    /* -s search/replace; -e adds more replacements (like sed -e) */
+    /* -s search/replace; -e adds more; -m = only matching lines; -F = field replace */
     if (strcmp(flag, "-s") == 0) {
         if (is_binary_file(filename)) { fprintf(stderr, "iv: refusing to edit binary file\n"); ret = 1; goto done; }
-        int a = next_arg(argc, argv, 3);
-        int b = (a >= 0) ? next_arg(argc, argv, a + 1) : -1;
-        if (a < 0 || b < 0) { fprintf(stderr, "Usage: -s file pattern replacement [-e pattern replacement...]\n"); ret = 1; goto done; }
-        int pairs[64][2], npairs = 0;
-        pairs[0][0] = a; pairs[0][1] = b; npairs = 1;
-        for (int i = 2; i < argc - 2; i++) {
-            if (strcmp(argv[i], "-e") == 0 && i + 2 < argc) {
-                pairs[npairs][0] = i + 1; pairs[npairs][1] = i + 2;
-                npairs++;
-            }
-        }
         int total = 0;
-        for (int p = 0; p < npairs; p++) {
-            char *pat = argv[pairs[p][0]], *repl = argv[pairs[p][1]];
-            int n;
-            if (opts.use_regex) {
-                n = search_replace_regex(lines, count, pat, repl, opts.global_replace);
-                if (n < 0) { fprintf(stderr, "iv: invalid regex pattern\n"); ret = 1; goto done; }
-            } else {
-                n = search_replace(lines, count, pat, repl, opts.global_replace);
+        if (opts.field_delim && opts.field_num > 0) {
+            int vi = -1;
+            for (int i = 2; i < argc - 1; i++)
+                if (strcmp(argv[i], "-F") == 0 && i + 3 < argc) { vi = i + 3; break; }
+            if (vi < 0) { fprintf(stderr, "Usage: -s file -F delim N value\n"); ret = 1; goto done; }
+            char *val = resolve_text(argv[vi]);
+            if (!val) val = strdup("");
+            replace_field(lines, count, opts.field_delim, opts.field_num, val);
+            total = count;
+            free(val);
+        } else {
+            int a = next_arg(argc, argv, 3);
+            int b = (a >= 0) ? next_arg(argc, argv, a + 1) : -1;
+            if (a < 0 || b < 0) { fprintf(stderr, "Usage: -s file pattern replacement [-e ...] [-m pattern]\n"); ret = 1; goto done; }
+            int pairs[64][2], npairs = 0;
+            pairs[0][0] = a; pairs[0][1] = b; npairs = 1;
+            for (int i = 2; i < argc - 2; i++) {
+                if (strcmp(argv[i], "-e") == 0 && i + 2 < argc) {
+                    pairs[npairs][0] = i + 1; pairs[npairs][1] = i + 2;
+                    npairs++;
+                }
             }
-            total += n;
+            for (int p = 0; p < npairs; p++) {
+                char *pat = argv[pairs[p][0]], *repl = argv[pairs[p][1]];
+                int n;
+                if (opts.use_regex) {
+                    n = opts.multimatch ? search_replace_regex_filtered(lines, count, pat, repl, opts.global_replace, opts.multimatch)
+                        : search_replace_regex(lines, count, pat, repl, opts.global_replace);
+                } else {
+                    n = opts.multimatch ? search_replace_filtered(lines, count, pat, repl, opts.global_replace, opts.multimatch)
+                        : search_replace(lines, count, pat, repl, opts.global_replace);
+                }
+                if (n < 0) { fprintf(stderr, "iv: invalid regex pattern\n"); ret = 1; goto done; }
+                total += n;
+            }
         }
         if (!opts.dry_run && total > 0) {
             if (!opts.to_stdout) {

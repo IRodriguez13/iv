@@ -29,10 +29,11 @@ void backup_file(const char *filename) {
     if (!src) return;
     FILE *dst = fopen(bakname, "w");
     if (!dst) { fclose(src); return; }
-    char buffer[MAX_LEN];
-    while (fgets(buffer, sizeof(buffer), src)) {
-        fputs(buffer, dst);
-    }
+    char *line = NULL;
+    size_t cap = 0;
+    while (getline(&line, &cap, src) != -1)
+        fputs(line, dst);
+    free(line);
     fclose(src);
     fclose(dst);
 }
@@ -224,6 +225,83 @@ int search_replace_regex(char *lines[], int count, const char *pattern,
     }
     regfree(&re);
     return total;
+}
+
+int search_replace_filtered(char *lines[], int count, const char *pattern,
+                            const char *replacement, int global, const char *filter) {
+    if (!pattern || !*pattern) return 0;
+    int total = 0;
+    for (int i = 0; i < count; i++) {
+        if (filter && !strstr(lines[i], filter)) continue;
+        int n;
+        char *new_line = replace_in_string(lines[i], pattern, replacement, global, &n);
+        if (new_line && n > 0) {
+            free(lines[i]);
+            lines[i] = new_line;
+            total += n;
+        } else if (new_line) {
+            free(new_line);
+        }
+    }
+    return total;
+}
+
+int search_replace_regex_filtered(char *lines[], int count, const char *pattern,
+                                   const char *replacement, int global, const char *filter) {
+    if (!pattern || !*pattern) return 0;
+    regex_t re;
+    if (regcomp(&re, pattern, REG_EXTENDED) != 0) return -1;
+    int total = 0;
+    for (int i = 0; i < count; i++) {
+        if (filter && !strstr(lines[i], filter)) continue;
+        int n;
+        char *new_line = replace_regex_in_string(lines[i], &re, replacement, global, &n);
+        if (new_line && n > 0) {
+            free(lines[i]);
+            lines[i] = new_line;
+            total += n;
+        } else if (new_line) {
+            free(new_line);
+        }
+    }
+    regfree(&re);
+    return total;
+}
+
+static char *replace_field_in_line(const char *line, char delim, int field_num, const char *value) {
+    size_t vlen = strlen(value);
+    size_t linelen = strlen(line);
+    char *out = malloc(linelen + vlen + 64);
+    if (!out) return NULL;
+    const char *p = line, *field_start = line;
+    int f = 1;
+    while (f < field_num && *p) {
+        if (*p == delim) { f++; p++; field_start = p; }
+        else p++;
+    }
+    if (f != field_num) {
+        strcpy(out, line);
+        return out;
+    }
+    size_t len = field_start - line;
+    memcpy(out, line, len);
+    memcpy(out + len, value, vlen + 1);
+    len += vlen;
+    while (*p && *p != delim && *p != '\n') p++;
+    strcpy(out + len, p);
+    return out;
+}
+
+int replace_field(char *lines[], int count, char delim, int field_num, const char *value) {
+    if (!delim || field_num < 1) return 0;
+    for (int i = 0; i < count; i++) {
+        char *new_line = replace_field_in_line(lines[i], delim, field_num, value);
+        if (new_line) {
+            free(lines[i]);
+            lines[i] = new_line;
+        }
+    }
+    return count;
 }
 
 void write_lines_to_file(const char *filename, char *lines[], int count) {
