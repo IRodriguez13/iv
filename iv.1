@@ -1,4 +1,4 @@
-.TH IV 1 "February 2026" "iv 0.3.0" "User Commands"
+.TH IV 1 "February 2026" "iv 0.9.0" "User Commands"
 .SH NAME
 iv \- line-oriented text editor for scripts and pipes
 .SH SYNOPSIS
@@ -26,10 +26,12 @@ iv \- line-oriented text editor for scripts and pipes
 .B iv
 .B \-u
 .IR file
+.RI [ N ]
 .PP
 .B iv
 .B \-diff
 .RI [ \-u ]
+.RI [ N ]
 .IR file
 .PP
 .B iv
@@ -37,7 +39,12 @@ iv \- line-oriented text editor for scripts and pipes
 .RI [ file ]
 .PP
 .B iv
-.B \-z
+.B \-lsbak
+.RI [ file ]
+.RI [ N ]
+.PP
+.B iv
+.BR "\-z," " \-rmbak"
 .RI [ file ]
 .PP
 .B iv
@@ -150,19 +157,29 @@ Print line numbers where \fIpattern\fR appears.
 outputs {\"lines\":[1,5,7]} for jq/Python integration.
 .TP
 .B \-u
-Undo: restore file from backup.
+Undo: restore file from backup slot
+.IR N
+(default 1). Up to 10 numbered backups per file (e.g. \fIiv_file.1.bak\fR, \fIiv_file.2.bak\fR).
 .TP
 .B \-diff
-Compare backup vs current file. With
+Compare backup
+.IR N
+(default 1) vs current file. With
 .B \-u
 uses unified diff format.
-Prints "no backup found" and exits if no backup exists.
+Prints "no backup found" and exits if that backup slot does not exist.
 .TP
 .B \-l
-List backups in IV_BACKUP_DIR. Optional \fIfile\fR filters by filename.
+List backups in IV_BACKUP_DIR (path and size only). Optional \fIfile\fR filters by filename.
+.TP
+.B \-lsbak
+List backups with metadata (date and user who wrote the backup). Optional \fIfile\fR filters by filename.
+If \fIN\fR is given, print that backup slot's metadata (to stderr) and full content (to stdout).
+Metadata is stored in \fIiv_file.N.meta\fR (timestamp and username).
 .TP
 .B \-z
-Remove backups. Optional \fIfile\fR removes only that file's backup.
+.B \-rmbak
+Remove backups. Optional \fIfile\fR removes all backups for that file only (and their \fI.N.meta\fR files).
 .SH EDIT COMMANDS
 .TP
 .B \-i
@@ -240,7 +257,13 @@ In insert/replace text: \fB\\n\fR newline, \fB\\t\fR tab, \fB\\\\\fR backslash, 
 .TP
 .B IV_BACKUP_DIR
 Directory for backups (default: /tmp). Backups are stored as
-.IR iv_<filename>.bak .
+.IR iv_<filename>.1.bak ,
+.IR iv_<filename>.2.bak ,
+etc.; each edit rotates and creates a new .1.bak (up to 10 slots).
+Corresponding
+.IR iv_<filename>.N.meta
+files store timestamp and username (see
+.BR \-lsbak ).
 .SH EXIT STATUS
 .TP
 .B 0

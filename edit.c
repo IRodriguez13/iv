@@ -6,13 +6,17 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <regex.h>
+#include <time.h>
+#include <unistd.h>
+#include <pwd.h>
 
 static const char *get_backup_dir(void) {
     const char *d = getenv("IV_BACKUP_DIR");
     return d && *d ? d : "/tmp";
 }
 
-void get_backup_path(const char *filename, char *buf, size_t size) {
+/* Write backup base name (e.g. "iv_filename") into buf; no directory, no .N.bak */
+static void get_backup_base(const char *filename, char *buf, size_t size) {
     const char *p = filename;
     while (*p == '.' && p[1] == '/') p += 2;
     while (*p == '/') p++;
@@ -22,15 +26,56 @@ void get_backup_path(const char *filename, char *buf, size_t size) {
         name[j++] = (*p == '/') ? '_' : *p;
     name[j] = '\0';
     if (j == 0) name[0] = 'f', name[1] = '\0';
-    snprintf(buf, size, "%s/iv_%s.bak", get_backup_dir(), name);
+    snprintf(buf, size, "iv_%s", name);
+}
+
+void get_backup_path(const char *filename, char *buf, size_t size) {
+    char base[280];
+    get_backup_base(filename, base, sizeof(base));
+    snprintf(buf, size, "%s/%s.1.bak", get_backup_dir(), base);
+}
+
+void get_backup_path_n(const char *filename, int n, char *buf, size_t size) {
+    char base[280];
+    get_backup_base(filename, base, sizeof(base));
+    snprintf(buf, size, "%s/%s.%d.bak", get_backup_dir(), base, n);
+}
+
+void get_backup_meta_path(const char *filename, int n, char *buf, size_t size) {
+    char base[280];
+    get_backup_base(filename, base, sizeof(base));
+    snprintf(buf, size, "%s/%s.%d.meta", get_backup_dir(), base, n);
+}
+
+static const char *get_username(void) {
+    const char *u = getenv("USER");
+    if (u && *u) return u;
+    {
+        struct passwd *pw = getpwuid(getuid());
+        if (pw && pw->pw_name) return pw->pw_name;
+    }
+    return "?";
 }
 
 void backup_file(const char *filename) {
-    char bakname[512];
-    get_backup_path(filename, bakname, sizeof(bakname));
+    const char *dir = get_backup_dir();
+    char base[280];
+    get_backup_base(filename, base, sizeof(base));
+    char path[512];
+    /* Rotate .bak and .meta: .(k) -> .(k+1) */
+    for (int k = MAX_BACKUPS - 1; k >= 1; k--) {
+        snprintf(path, sizeof(path), "%s/%s.%d.bak", dir, base, k);
+        char path_next[512];
+        snprintf(path_next, sizeof(path_next), "%s/%s.%d.bak", dir, base, k + 1);
+        (void) rename(path, path_next);
+        snprintf(path, sizeof(path), "%s/%s.%d.meta", dir, base, k);
+        snprintf(path_next, sizeof(path_next), "%s/%s.%d.meta", dir, base, k + 1);
+        (void) rename(path, path_next);
+    }
     FILE *src = fopen(filename, "r");
     if (!src) return;
-    FILE *dst = fopen(bakname, "w");
+    snprintf(path, sizeof(path), "%s/%s.1.bak", dir, base);
+    FILE *dst = fopen(path, "w");
     if (!dst) { fclose(src); return; }
     char *line = NULL;
     size_t cap = 0;
@@ -39,6 +84,13 @@ void backup_file(const char *filename) {
     free(line);
     fclose(src);
     fclose(dst);
+    /* Write metadata: epoch and username */
+    snprintf(path, sizeof(path), "%s/%s.1.meta", dir, base);
+    FILE *meta = fopen(path, "w");
+    if (meta) {
+        fprintf(meta, "%ld %s\n", (long)time(NULL), get_username());
+        fclose(meta);
+    }
 }
 
 void write_with_escapes(FILE *f, const char *text) {
@@ -339,22 +391,37 @@ void write_lines_to_stream(FILE *f, char *lines[], int count) {
         fputs(lines[i], f);
 }
 
+/* Read .meta file (path_bak -> path_meta), fill out_ts and out_user; return 0 on success */
+static int read_backup_meta(const char *path_bak, time_t *out_ts, char *out_user, size_t user_size) {
+    size_t len = strlen(path_bak);
+    if (len < 5 || strcmp(path_bak + len - 4, ".bak") != 0) return -1;
+    char path_meta[512];
+    snprintf(path_meta, sizeof(path_meta), "%.*smeta", (int)(len - 3), path_bak);
+    FILE *f = fopen(path_meta, "r");
+    if (!f) return -1;
+    long epoch = 0;
+    int n = fscanf(f, "%ld %255s", &epoch, out_user);
+    fclose(f);
+    if (n >= 1) { *out_ts = (time_t)epoch; if (n < 2) out_user[0] = '\0'; return 0; }
+    return -1;
+}
+
 void list_backups(const char *filter) {
     const char *dir = get_backup_dir();
     DIR *d = opendir(dir);
     if (!d) { perror(dir); return; }
+    char base[280];
+    if (filter && *filter)
+        get_backup_base(filter, base, sizeof(base));
+    size_t base_len = filter && *filter ? strlen(base) : 0;
     char path[512];
     struct dirent *e;
     while ((e = readdir(d))) {
         if (e->d_name[0] == '.' || strncmp(e->d_name, "iv_", 3) != 0) continue;
         size_t len = strlen(e->d_name);
         if (len < 5 || strcmp(e->d_name + len - 4, ".bak") != 0) continue;
-        if (filter && *filter) {
-            char want[512];
-            get_backup_path(filter, want, sizeof(want));
-            snprintf(path, sizeof(path), "%s/%s", dir, e->d_name);
-            if (strcmp(path, want) != 0) continue;
-        }
+        if (base_len && (strncmp(e->d_name, base, base_len) != 0 || e->d_name[base_len] != '.'))
+            continue;
         snprintf(path, sizeof(path), "%s/%s", dir, e->d_name);
         struct stat st;
         if (stat(path, &st) == 0)
@@ -363,10 +430,70 @@ void list_backups(const char *filter) {
     closedir(d);
 }
 
+void list_backups_with_meta(const char *filter) {
+    const char *dir = get_backup_dir();
+    DIR *d = opendir(dir);
+    if (!d) { perror(dir); return; }
+    char base[280];
+    if (filter && *filter)
+        get_backup_base(filter, base, sizeof(base));
+    size_t base_len = filter && *filter ? strlen(base) : 0;
+    char path[512];
+    struct dirent *e;
+    while ((e = readdir(d))) {
+        if (e->d_name[0] == '.' || strncmp(e->d_name, "iv_", 3) != 0) continue;
+        size_t len = strlen(e->d_name);
+        if (len < 5 || strcmp(e->d_name + len - 4, ".bak") != 0) continue;
+        if (base_len && (strncmp(e->d_name, base, base_len) != 0 || e->d_name[base_len] != '.'))
+            continue;
+        snprintf(path, sizeof(path), "%s/%s", dir, e->d_name);
+        struct stat st;
+        if (stat(path, &st) != 0) continue;
+        time_t ts = 0;
+        char user[256] = "";
+        int has_meta = (read_backup_meta(path, &ts, user, sizeof(user)) == 0);
+        printf("%s  %zu bytes", path, (size_t)st.st_size);
+        if (has_meta) {
+            char buf[64];
+            struct tm *tm = localtime(&ts);
+            if (tm && strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", tm) > 0)
+                printf("  %s  %s", buf, user[0] ? user : "?");
+        }
+        printf("\n");
+    }
+    closedir(d);
+}
+
+/* Print metadata and content of backup slot N for file; return 0 on success */
+int show_backup_slot(const char *filename, int n) {
+    char path_bak[512], path_meta[512];
+    get_backup_path_n(filename, n, path_bak, sizeof(path_bak));
+    get_backup_meta_path(filename, n, path_meta, sizeof(path_meta));
+    FILE *f = fopen(path_bak, "r");
+    if (!f) { fprintf(stderr, "iv: no backup %d found for %s\n", n, filename); return -1; }
+    time_t ts = 0;
+    char user[256] = "";
+    if (read_backup_meta(path_bak, &ts, user, sizeof(user)) == 0) {
+        char buf[64];
+        struct tm *tm = localtime(&ts);
+        if (tm && strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", tm) > 0)
+            fprintf(stderr, "# backup %d  %s  user: %s\n", n, buf, user[0] ? user : "?");
+    }
+    char line[4096];
+    while (fgets(line, sizeof(line), f))
+        fputs(line, stdout);
+    fclose(f);
+    return 0;
+}
+
 void clean_backups(const char *filter) {
     const char *dir = get_backup_dir();
     DIR *d = opendir(dir);
     if (!d) { perror(dir); return; }
+    char base[280];
+    if (filter && *filter)
+        get_backup_base(filter, base, sizeof(base));
+    size_t base_len = filter && *filter ? strlen(base) : 0;
     char path[512];
     struct dirent *e;
     int removed = 0;
@@ -374,14 +501,17 @@ void clean_backups(const char *filter) {
         if (e->d_name[0] == '.' || strncmp(e->d_name, "iv_", 3) != 0) continue;
         size_t len = strlen(e->d_name);
         if (len < 5 || strcmp(e->d_name + len - 4, ".bak") != 0) continue;
-        if (filter && *filter) {
-            char want[512];
-            get_backup_path(filter, want, sizeof(want));
-            snprintf(path, sizeof(path), "%s/%s", dir, e->d_name);
-            if (strcmp(path, want) != 0) continue;
-        }
+        if (base_len && (strncmp(e->d_name, base, base_len) != 0 || e->d_name[base_len] != '.'))
+            continue;
         snprintf(path, sizeof(path), "%s/%s", dir, e->d_name);
         if (remove(path) == 0) removed++;
+        /* Remove corresponding .meta */
+        size_t plen = strlen(path);
+        if (plen >= 4 && strcmp(path + plen - 4, ".bak") == 0) {
+            char path_meta[512];
+            snprintf(path_meta, sizeof(path_meta), "%.*smeta", (int)(plen - 3), path);
+            (void) remove(path_meta);
+        }
     }
     closedir(d);
     if (removed > 0)

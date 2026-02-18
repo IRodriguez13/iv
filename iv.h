@@ -13,8 +13,9 @@
 #include <stddef.h>
 
 #define INITIAL_LINES 256
+#define MAX_BACKUPS 50
 
-#define IV_VERSION "0.3.0"
+#define IV_VERSION "0.9.0"
 
 /* Options (set by main from argv) */
 typedef struct {
@@ -42,6 +43,8 @@ int wc_lines(char *lines[], int count);
 
 /* Edit */
 void get_backup_path(const char *filename, char *buf, size_t size);
+void get_backup_path_n(const char *filename, int n, char *buf, size_t size);
+void get_backup_meta_path(const char *filename, int n, char *buf, size_t size);
 void backup_file(const char *filename);
 void write_with_escapes(FILE *f, const char *text);
 int apply_patch(const char *filename, char *lines[], int count,
@@ -85,6 +88,12 @@ int stream_file_with_numbers(const char *path);
 
 /* List backups in backup dir. filter=NULL: all; filter="file": backups for that file */
 void list_backups(const char *filter);
+
+/* List backups with metadata (date, user). */
+void list_backups_with_meta(const char *filter);
+
+/* Show backup slot N: metadata (stderr) and content (stdout). Return 0 on success. */
+int show_backup_slot(const char *filename, int n);
 
 /* Remove backups. filter=NULL: all; filter="file": backup for that file only */
 void clean_backups(const char *filter);

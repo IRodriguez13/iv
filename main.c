@@ -20,15 +20,16 @@ static void usage(const char *prog) {
     fprintf(stderr, "  %s -va [--no-numbers] start-end file\n", prog);
     fprintf(stderr, "  %s -wc file\n", prog);
     fprintf(stderr, "  %s -n file \"pattern\" [--json]  (line numbers; --json for {\"lines\":[...]})\n", prog);
-    fprintf(stderr, "  %s -u file  (undo: restore from .bak)\n", prog);
-    fprintf(stderr, "  %s -diff [-u] file  (anterior .bak vs actual; -u = unified diff)\n", prog);
+    fprintf(stderr, "  %s -u file [N]  (undo: restore from backup N, default 1; N=1..%d)\n", prog, MAX_BACKUPS);
+    fprintf(stderr, "  %s -diff [-u] [N] file  (compare backup N vs current; -u = unified diff)\n", prog);
     fprintf(stderr, "  %s -i|-insert file [start-end] \"text\" [-q] [--dry-run] [--no-backup]\n", prog);
     fprintf(stderr, "  %s -a file \"text\" [-q]  (append)\n", prog);
     fprintf(stderr, "  %s -p file [file...] [range] content [-q]  (patch, múltiples archivos)\n", prog);
     fprintf(stderr, "  %s -pi file [file...] line content [-q]  (patch insert: insert before line, no replace)\n", prog);
     fprintf(stderr, "  %s -s file pattern replacement [-e ...] [-m pattern] [-F delim N value] [-E] [-g] [-q] [--dry-run] [--no-backup]\n", prog);
     fprintf(stderr, "  %s -l [file]  (listar backups)\n", prog);
-    fprintf(stderr, "  %s -z [file]  (limpiar backups antiguos)\n", prog);
+    fprintf(stderr, "  %s -lsbak [file] [N]  (list backups with date/user; N = show content of slot N)\n", prog);
+    fprintf(stderr, "  %s -rmbak [file]  (remove backups; alias: -z)\n", prog);
     fprintf(stderr, "  %s -d|-delete file [start-end] [-m pattern] [--dry-run] [--no-backup]\n", prog);
     fprintf(stderr, "  %s -r|-replace file [start-end] \"text\" [-m pattern] [-q] [--dry-run] [--no-backup]\n", prog);
     fprintf(stderr, "\n  -e = more replacements. -m = only lines matching pattern. -F delim N = field N (CSV). --stdout = no file write.\n");
@@ -72,7 +73,7 @@ static int next_arg(int argc, char *argv[], int i) {
         if (strcmp(argv[i], "--dry-run") && strcmp(argv[i], "--no-backup") &&
             strcmp(argv[i], "--no-numbers") && strcmp(argv[i], "-g") &&
             strcmp(argv[i], "-E") && strcmp(argv[i], "--regex") &&
-            strcmp(argv[i], "-q") && strcmp(argv[i], "-z") && strcmp(argv[i], "-u") &&
+            strcmp(argv[i], "-q") && strcmp(argv[i], "-z") && strcmp(argv[i], "-rmbak") && strcmp(argv[i], "-u") &&
             strcmp(argv[i], "-e") && strcmp(argv[i], "--stdout") &&
             strcmp(argv[i], "-m") && strcmp(argv[i], "-F") && strcmp(argv[i], "--json"))
             return i;
@@ -201,9 +202,25 @@ int main(int argc, char *argv[]) {
         list_backups(filter);
         return 0;
     }
-    if (strcmp(flag, "-z") == 0) {
+    if (strcmp(flag, "-z") == 0 || strcmp(flag, "-rmbak") == 0) {
         char *filter = (argc >= 3) ? argv[2] : NULL;
         clean_backups(filter);
+        return 0;
+    }
+    if (strcmp(flag, "-lsbak") == 0) {
+        int fi = next_arg(argc, argv, 2);
+        if (fi < 0) {
+            list_backups_with_meta(NULL);
+            return 0;
+        }
+        char *file = argv[fi];
+        int fi2 = next_arg(argc, argv, fi + 1);
+        if (fi2 >= 0 && argv[fi2][0] >= '1' && argv[fi2][0] <= '9') {
+            int slot = atoi(argv[fi2]);
+            if (slot >= 1 && slot <= MAX_BACKUPS)
+                return show_backup_slot(file, slot) == 0 ? 0 : 1;
+        }
+        list_backups_with_meta(file);
         return 0;
     }
 
@@ -223,19 +240,31 @@ int main(int argc, char *argv[]) {
         filename = argv[2];
     }
 
-    /* -diff: show backup (anterior) and file (actual) in our format, streaming */
+    /* -diff: show backup N (default 1) and file in our format, or unified diff */
     if (strcmp(flag, "-diff") == 0) {
-        int fi = next_arg(argc, argv, 2);
-        if (fi < 0) { fprintf(stderr, "iv: -diff needs a file\n"); return 1; }
-        filename = argv[fi];
         int unified = 0;
-        for (int i = 2; i < fi; i++)
-            if (strcmp(argv[i], "-u") == 0) { unified = 1; break; }
+        int diff_slot = 1;
+        int fi = -1;
+        for (int i = 2; i < argc; i++) {
+            if (strcmp(argv[i], "-u") == 0) unified = 1;
+            else if (argv[i][0] >= '1' && argv[i][0] <= '9' && (fi < 0 || i < fi)) {
+                int n = atoi(argv[i]);
+                if (n >= 1 && n <= MAX_BACKUPS) diff_slot = n;
+            } else if (strcmp(argv[i], "--dry-run") && strcmp(argv[i], "--no-backup") &&
+                       strcmp(argv[i], "-q") && strcmp(argv[i], "-z") && strcmp(argv[i], "-rmbak") && strcmp(argv[i], "-u") &&
+                       strcmp(argv[i], "-e") && strcmp(argv[i], "--stdout") &&
+                       strcmp(argv[i], "-m") && strcmp(argv[i], "-F") && strcmp(argv[i], "--json")) {
+                fi = i;
+                filename = argv[i];
+                break;
+            }
+        }
+        if (fi < 0) { fprintf(stderr, "iv: -diff needs a file\n"); return 1; }
         char bakname[512];
-        get_backup_path(filename, bakname, sizeof(bakname));
+        get_backup_path_n(filename, diff_slot, bakname, sizeof(bakname));
         FILE *bak = fopen(bakname, "r");
         if (!bak) {
-            fprintf(stderr, "iv: no backup found for %s\n", filename);
+            fprintf(stderr, "iv: no backup %d found for %s (%s)\n", diff_slot, filename, bakname);
             return 0;
         }
         fclose(bak);
@@ -249,7 +278,7 @@ int main(int argc, char *argv[]) {
                 pclose(p);
             }
         } else {
-            fprintf(stdout, "--- %s (previous)\n", bakname);
+            fprintf(stdout, "--- %s (backup %d)\n", bakname, diff_slot);
             stream_file_with_numbers(bakname);
             fprintf(stdout, "\n--- %s (current)\n", filename);
             stream_file_with_numbers(filename);
@@ -257,12 +286,17 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
-    /* -u undo: restore from backup in /tmp (before loading file) */
+    /* -u undo: restore from backup N (default 1) in /tmp */
     if (strcmp(flag, "-u") == 0) {
+        int slot = 1;
+        if (argc >= 4 && argv[3][0] >= '1' && argv[3][0] <= '9') {
+            int n = atoi(argv[3]);
+            if (n >= 1 && n <= MAX_BACKUPS) slot = n;
+        }
         char bakname[512];
-        get_backup_path(filename, bakname, sizeof(bakname));
+        get_backup_path_n(filename, slot, bakname, sizeof(bakname));
         FILE *src = fopen(bakname, "r");
-        if (!src) { fprintf(stderr, "iv: no backup found (%s)\n", bakname); return 1; }
+        if (!src) { fprintf(stderr, "iv: no backup %d found (%s)\n", slot, bakname); return 1; }
         FILE *dst = fopen(filename, "w");
         if (!dst) { fclose(src); perror(filename); return 1; }
         char buf[4096];
@@ -377,7 +411,7 @@ int main(int argc, char *argv[]) {
             if (strcmp(argv[i], "--dry-run") && strcmp(argv[i], "--no-backup") &&
                 strcmp(argv[i], "--no-numbers") && strcmp(argv[i], "-g") &&
                 strcmp(argv[i], "-E") && strcmp(argv[i], "--regex") &&
-                strcmp(argv[i], "-q") && strcmp(argv[i], "-z") && strcmp(argv[i], "-u") &&
+                strcmp(argv[i], "-q") && strcmp(argv[i], "-z") && strcmp(argv[i], "-rmbak") && strcmp(argv[i], "-u") &&
                 strcmp(argv[i], "-e") && strcmp(argv[i], "--stdout") &&
                 strcmp(argv[i], "-m") && strcmp(argv[i], "-F") && strcmp(argv[i], "--json")) {
                 if (nargs < 64) args[nargs++] = i;
@@ -441,7 +475,7 @@ int main(int argc, char *argv[]) {
             if (strcmp(argv[i], "--dry-run") && strcmp(argv[i], "--no-backup") &&
                 strcmp(argv[i], "--no-numbers") && strcmp(argv[i], "-g") &&
                 strcmp(argv[i], "-E") && strcmp(argv[i], "--regex") &&
-                strcmp(argv[i], "-q") && strcmp(argv[i], "-z") && strcmp(argv[i], "-u") &&
+                strcmp(argv[i], "-q") && strcmp(argv[i], "-z") && strcmp(argv[i], "-rmbak") && strcmp(argv[i], "-u") &&
                 strcmp(argv[i], "-e") && strcmp(argv[i], "--stdout") &&
                 strcmp(argv[i], "-m") && strcmp(argv[i], "-F") && strcmp(argv[i], "--json")) {
                 if (nargs < 64) args[nargs++] = i;
