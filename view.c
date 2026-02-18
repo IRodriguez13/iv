@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+/* Copyright (C) 2026 Iván Ezequiel Rodriguez */
+
 #include "iv.h"
 
 void show_file(char *lines[], int count, int no_numbers) {

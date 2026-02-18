@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+/* Copyright (C) 2026 Iván Ezequiel Rodriguez */
+
 #include "iv.h"
 
 #define CMD_VIEW      1
@@ -186,6 +189,11 @@ int main(int argc, char *argv[]) {
     }
     if (strcmp(flag, "--version") == 0 || strcmp(flag, "-V") == 0) {
         printf("iv %s\n", IV_VERSION);
+        printf("License GPLv3+: GNU GPL version 3 or later <https://gnu.org/licenses/gpl.html>.\n");
+        printf("This is free software: you are free to change and redistribute it.\n");
+        printf("There is NO WARRANTY, to the extent permitted by law.\n");
+        printf("\n");
+        printf("Written by Iván Ezequiel Rodriguez.\n");
         return 0;
     }
     if (strcmp(flag, "-l") == 0 || strcmp(flag, "-lb") == 0) {

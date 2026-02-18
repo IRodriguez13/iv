@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+/* Copyright (C) 2026 Iván Ezequiel Rodriguez */
+
 #ifndef IV_H
 #define IV_H
 
@@ -11,7 +14,7 @@
 
 #define INITIAL_LINES 256
 
-#define IV_VERSION "0.1.1"
+#define IV_VERSION "0.3.0"
 
 /* Options (set by main from argv) */
 typedef struct {
