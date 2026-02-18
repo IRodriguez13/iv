@@ -36,6 +36,7 @@ make clean
 | `iv -i file start-end "texto"` | Inserta texto antes de la línea `start` |
 | `iv -a file "texto"` | Añade texto al final del archivo |
 | `iv -p file [file...] [range] content` | Parchea uno o más archivos; range opcional |
+| `iv -pi file [file...] line content` | Patch insert: inserta antes de la línea indicada (no reemplaza); la línea y el resto bajan |
 | `iv -d file [start-end]` | Elimina líneas (alias: `-delete`) |
 | `iv -d file -m "pattern"` | Elimina solo líneas que coinciden con el patrón |
 | `iv -r file [start-end] "texto"` | Reemplaza líneas (alias: `-replace`) |
@@ -85,6 +86,7 @@ echo "línea nueva" | iv -p file           # sin arg = stdin
 iv -p main.c snippet.c                    # append archivo
 iv -p main.c 5 snippet.c                   # insertar en línea 5
 iv -p main.c 1-3 plantilla.txt             # reemplazar líneas 1-3
+iv -pi main.c 1 "#include <foo.h>"         # insertar línea 1 sin reemplazar (baja el resto)
 iv -p f1.c f2.c snippet.c                 # parchear múltiples archivos
 iv -s file "[0-9]+" "X" -E                 # regex
 iv -s file "a" "b" -e "c" "d"             # múltiples sustituciones
@@ -110,7 +112,7 @@ iv -i file "línea1\nlínea2\nlínea3"
 
 ## Comportamiento tipo tee
 
-`-insert`, `-replace`, `-a` y `-p` escriben en stdout el texto añadido, de forma similar a `tee`. Usa `-q` para suprimir esta salida.
+`-insert`, `-replace`, `-a`, `-p` y `-pi` escriben en stdout el texto añadido, de forma similar a `tee`. Usa `-q` para suprimir esta salida.
 
 ## Pipelines con --stdout
 

@@ -22,6 +22,7 @@ static void usage(const char *prog) {
     fprintf(stderr, "  %s -i|-insert file [start-end] \"text\" [-q] [--dry-run] [--no-backup]\n", prog);
     fprintf(stderr, "  %s -a file \"text\" [-q]  (append)\n", prog);
     fprintf(stderr, "  %s -p file [file...] [range] content [-q]  (patch, múltiples archivos)\n", prog);
+    fprintf(stderr, "  %s -pi file [file...] line content [-q]  (patch insert: insert before line, no replace)\n", prog);
     fprintf(stderr, "  %s -s file pattern replacement [-e ...] [-m pattern] [-F delim N value] [-E] [-g] [-q] [--dry-run] [--no-backup]\n", prog);
     fprintf(stderr, "  %s -l [file]  (listar backups)\n", prog);
     fprintf(stderr, "  %s -z [file]  (limpiar backups antiguos)\n", prog);
@@ -273,7 +274,7 @@ int main(int argc, char *argv[]) {
         if (!f) {
             /* Only create for edit commands that write to new files */
             if (strcmp(flag, "-i") == 0 || strcmp(flag, "-insert") == 0 ||
-                strcmp(flag, "-a") == 0 || strcmp(flag, "-p") == 0) {
+                strcmp(flag, "-a") == 0 || strcmp(flag, "-p") == 0 || strcmp(flag, "-pi") == 0) {
                 f = fopen(filename, "w");
                 if (f) fclose(f);
                 f = fopen(filename, "r");
@@ -415,6 +416,56 @@ int main(int argc, char *argv[]) {
                 if (fstart < 1) fstart = 1;
             }
             if (apply_patch(fname, flines, fcount, fstart, fend, new_text, mode, &opts) == 0 && !opts.dry_run && !opts.quiet) {
+                printf("%s", new_text);
+                if (new_text[0] && new_text[strlen(new_text)-1] != '\n') putchar('\n');
+            }
+            for (int i = 0; i < fcount; i++) free(flines[i]);
+            free(flines);
+        }
+        free(new_text);
+        goto done;
+    }
+
+    /* -pi patch insert: insert new line before given line (no replace), shift rest down. Line required for insert. */
+    if (strcmp(flag, "-pi") == 0) {
+        int args[64], nargs = 0;
+        for (int i = 2; i < argc; i++) {
+            if (strcmp(argv[i], "--dry-run") && strcmp(argv[i], "--no-backup") &&
+                strcmp(argv[i], "--no-numbers") && strcmp(argv[i], "-g") &&
+                strcmp(argv[i], "-E") && strcmp(argv[i], "--regex") &&
+                strcmp(argv[i], "-q") && strcmp(argv[i], "-z") && strcmp(argv[i], "-u") &&
+                strcmp(argv[i], "-e") && strcmp(argv[i], "--stdout") &&
+                strcmp(argv[i], "-m") && strcmp(argv[i], "-F") && strcmp(argv[i], "--json")) {
+                if (nargs < 64) args[nargs++] = i;
+            }
+        }
+        if (nargs == 0) { fprintf(stderr, "iv: -pi needs at least file and content\n"); ret = 1; goto done; }
+        char *content_arg = argv[args[nargs-1]];
+        char *new_text = strcmp(content_arg, "-") == 0 ? read_stdin() : resolve_text(content_arg);
+        if (!new_text) new_text = strdup("");
+        int insert_line = 0;
+        int nfiles = nargs - 1;
+        if (nargs >= 2) {
+            int s, e;
+            if (parse_range(argv[args[nargs-2]], 10000, &s, &e) == 0) {
+                insert_line = s;
+                nfiles = nargs - 2;
+            }
+        }
+        if (nfiles == 0) { fprintf(stderr, "iv: -pi needs at least one file\n"); free(new_text); ret = 1; goto done; }
+        for (int f = 0; f < nfiles; f++) {
+            char *fname = argv[args[f]];
+            if (is_binary_file(fname)) { fprintf(stderr, "iv: refusing to edit binary file %s\n", fname); ret = 1; continue; }
+            FILE *fp = fopen(fname, "r");
+            if (!fp) { fp = fopen(fname, "w"); if (fp) fclose(fp); fp = fopen(fname, "r"); }
+            if (!fp) { perror(fname); continue; }
+            int fcount = 0;
+            char **flines = load_lines(fp, &fcount);
+            fclose(fp);
+            if (!flines) { perror(fname); continue; }
+            int fstart = insert_line > 0 ? insert_line : fcount + 1;
+            if (fstart < 1) fstart = 1;
+            if (apply_patch(fname, flines, fcount, fstart, fstart, new_text, 4, &opts) == 0 && !opts.dry_run && !opts.quiet) {
                 printf("%s", new_text);
                 if (new_text[0] && new_text[strlen(new_text)-1] != '\n') putchar('\n');
             }

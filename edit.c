@@ -72,6 +72,25 @@ int apply_patch(const char *filename, char *lines[], int count,
 
     int wrote_new = 0;
 
+    /* mode 4: patch insert — insert new line before start, shift line and rest down */
+    if (mode == 4) {
+        for (int i = 0; i < count; i++) {
+            if (i + 1 == start) {
+                if (f) write_with_escapes(f, new_text);
+                wrote_new = 1;
+                if (f) fputs(lines[i], f);
+            } else {
+                if (f) fputs(lines[i], f);
+            }
+        }
+        if (start > count || count == 0) {
+            if (f) write_with_escapes(f, new_text);
+            wrote_new = 1;
+        }
+        if (f && f != stdout) fclose(f);
+        return wrote_new ? 0 : -1;
+    }
+
     for (int i = 0; i < count; i++) {
         if (i+1 >= start && i+1 <= end) {
             if (mode == 2) continue;

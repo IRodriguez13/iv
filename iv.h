@@ -11,7 +11,7 @@
 
 #define INITIAL_LINES 256
 
-#define IV_VERSION "0.0.1"
+#define IV_VERSION "0.1.1"
 
 /* Options (set by main from argv) */
 typedef struct {

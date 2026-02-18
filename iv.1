@@ -64,6 +64,14 @@ iv \- line-oriented text editor for scripts and pipes
 .RI [ \-q ]
 .PP
 .B iv
+.B \-pi
+.IR file
+.RI [ file... ]
+.IR line
+.IR content
+.RI [ \-q ]
+.PP
+.B iv
 .BR "\-d," " \-\-delete"
 .IR file
 .RI [ start\-end ]
@@ -166,6 +174,11 @@ Append text at end of file.
 .TP
 .B \-p
 Patch one or more files. Optional range for replace mode.
+.TP
+.B \-pi
+Patch insert: insert a new line \fIbefore\fR the given line without replacing it;
+the line and all following lines are shifted down. Requires \fIline\fR (e.g. 1).
+Without line, appends at end. Use to insert e.g. an include at line 1.
 .TP
 .B \-d
 .B \-\-delete
