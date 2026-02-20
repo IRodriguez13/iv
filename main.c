@@ -55,9 +55,11 @@ static void parse_opts(int argc, char *argv[], IvOpts *opts)
             opts->to_stdout = 1;
         else if (strcmp(argv[i], "--json") == 0)
             opts->json = 1;
-        else if (strcmp(argv[i], "--persist") == 0)
+        else if (strcmp(argv[i], "--persist") == 0 ||
+                 strcmp(argv[i], "-persistence") == 0)
             opts->persist = 1;
-        else if (strcmp(argv[i], "--unpersist") == 0)
+        else if (strcmp(argv[i], "--unpersist") == 0 ||
+                 strcmp(argv[i], "-unpersist") == 0)
             opts->unpersist = 1;
         else if (strcmp(argv[i], "-m") == 0 && i + 1 < argc)
             opts->multimatch = argv[++i];
@@ -83,7 +85,9 @@ static int is_flag(const char *s)
            strcmp(s, "--stdout") == 0 ||
            strcmp(s, "--json") == 0 ||
            strcmp(s, "--persist") == 0 ||
+           strcmp(s, "-persistence") == 0 ||
            strcmp(s, "--unpersist") == 0 ||
+           strcmp(s, "-unpersist") == 0 ||
            strcmp(s, "-z") == 0 ||
            strcmp(s, "-rmbak") == 0 ||
            strcmp(s, "-u") == 0 ||
@@ -312,9 +316,10 @@ int main(int argc, char *argv[])
     int persisted = opts.persist; /* convenience */
 
     /* ── --persist / --unpersist: move backup repo ── */
-    if (strcmp(flag, "--persist") == 0 || strcmp(flag, "--unpersist") == 0)
+    if (strcmp(flag, "--persist") == 0 || strcmp(flag, "--unpersist") == 0 ||
+        strcmp(flag, "-persistence") == 0 || strcmp(flag, "-unpersist") == 0)
     {
-        int to_persist = (strcmp(flag, "--persist") == 0) ? 1 : 0;
+        int to_persist = (strcmp(flag, "--persist") == 0 || strcmp(flag, "-persistence") == 0) ? 1 : 0;
         int fi = next_arg(argc, argv, 2);
         if (fi < 0)
         {
@@ -337,7 +342,18 @@ int main(int argc, char *argv[])
     if (strcmp(flag, "-l") == 0 || strcmp(flag, "-lb") == 0)
     {
         int fi = next_arg(argc, argv, 2);
-        list_backups(fi >= 0 ? argv[fi] : NULL, persisted);
+        const char *file = (fi >= 0) ? argv[fi] : NULL;
+        if (persisted)
+        {
+            list_backups(file, 1);
+        }
+        else
+        {
+            fprintf(stderr, "-- Ephemeral backups (/tmp) --\n");
+            list_backups(file, 0);
+            fprintf(stderr, "\n-- Persisted backups (~/.local/share/iv) --\n");
+            list_backups(file, 1);
+        }
         return 0;
     }
 
@@ -355,7 +371,17 @@ int main(int argc, char *argv[])
         int fi = next_arg(argc, argv, 2);
         if (fi < 0)
         {
-            list_backups_with_meta(NULL, persisted);
+            if (persisted)
+            {
+                list_backups_with_meta(NULL, 1);
+            }
+            else
+            {
+                fprintf(stderr, "-- Ephemeral backups (/tmp) --\n");
+                list_backups_with_meta(NULL, 0);
+                fprintf(stderr, "\n-- Persisted backups (~/.local/share/iv) --\n");
+                list_backups_with_meta(NULL, 1);
+            }
             return 0;
         }
         const char *file = argv[fi];
@@ -363,9 +389,23 @@ int main(int argc, char *argv[])
         if (fi2 >= 0 && argv[fi2][0] >= '1' && argv[fi2][0] <= '9')
         {
             int slot = atoi(argv[fi2]);
-            return show_backup_slot(file, persisted, slot) == 0 ? 0 : 1;
+            if (persisted)
+                return show_backup_slot(file, 1, slot) == 0 ? 0 : 1;
+            if (show_backup_slot(file, 0, slot) == 0)
+                return 0;
+            return show_backup_slot(file, 1, slot) == 0 ? 0 : 1;
         }
-        list_backups_with_meta(file, persisted);
+        if (persisted)
+        {
+            list_backups_with_meta(file, 1);
+        }
+        else
+        {
+            fprintf(stderr, "-- Ephemeral backups (/tmp) --\n");
+            list_backups_with_meta(file, 0);
+            fprintf(stderr, "\n-- Persisted backups (~/.local/share/iv) --\n");
+            list_backups_with_meta(file, 1);
+        }
         return 0;
     }
 

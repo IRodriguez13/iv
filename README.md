@@ -10,6 +10,18 @@ make install   # instala en /usr/bin
 make clean
 ```
 
+## Autocompletado (bash)
+
+Hay un script de completion en `completions/iv.bash`.
+
+Para habilitarlo en tu sesión actual:
+
+```bash
+source completions/iv.bash
+```
+
+Para habilitarlo permanente, agregalo a tu `~/.bashrc`.
+
 ## Comandos
 
 ### Visualización
@@ -24,11 +36,11 @@ make clean
 | `iv -n file "pattern" --json` | Salida JSON: `{"lines":[1,5,7]}` (para jq, Python, etc.) |
 | `iv -u file [N]` | Deshace: restaura desde el backup N (por defecto 1); N=1..10 |
 | `iv -diff [-u] [N] file` | Compara backup N vs actual; `-u` = diff unificado |
-| `iv -l [file] [--persist]` | Lista backups: solo ruta y tamaño |
-| `iv -lsbak [file] [N] [--persist]` | Lista backups **con metadatos** (fecha y usuario); si indicas N, muestra el contenido de ese slot |
+| `iv -l [file] [--persist]` | Lista backups: solo ruta y tamaño. Por defecto lista **efímeros + persistidos**; con `--persist` lista solo persistidos |
+| `iv -lsbak [file] [N] [--persist]` | Lista backups **con metadatos** (fecha y usuario). Por defecto lista **efímeros + persistidos**; con `--persist` lista solo persistidos. Si indicas N, muestra el contenido de ese slot |
 | `iv -rmbak [file] [--persist]` | Elimina backups (alias: `-z`). Sin archivo: todos; con archivo: solo los de ese archivo |
-| `iv --persist file` | Mueve el repo de backups de ese archivo desde `/tmp` a `~/.local/share/iv/` |
-| `iv --unpersist file` | Mueve el repo de backups de ese archivo desde `~/.local/share/iv/` a `/tmp` |
+| `iv --persist file` | Mueve el repo de backups de ese archivo desde `/tmp` a `~/.local/share/iv/` (alias: `-persistence`) |
+| `iv --unpersist file` | Mueve el repo de backups de ese archivo desde `~/.local/share/iv/` a `/tmp` (alias: `-unpersist`) |
 | `iv -V` / `iv --version` | Muestra versión |
 
 ### Edición
@@ -158,16 +170,16 @@ range.c   — parse_range
 
 - El repo de backups puede ser **efímero** (por defecto) o **persistido**.
 - Repo efímero: root en `/tmp/iv_<user>/` por defecto. Se puede cambiar con la variable de entorno `IV_BACKUP_DIR`.
-- Repo persistido: root en `$XDG_DATA_HOME/iv` o `~/.local/share/iv/`.
+- El repo persistido: root en `$XDG_DATA_HOME/iv` o `~/.local/share/iv/`.
 - Los backups se guardan **por archivo** dentro de un subdirectorio derivado del nombre del repo y el path del archivo.
 - Cada slot se guarda como `N.bak` (por ejemplo `1.bak`, `2.bak`, ...), y el archivo `N.meta` (si existe) guarda `epoch` + `usuario`.
-- `iv -lsbak [file] [--persist]` lista backups mostrando fecha y usuario cuando hay `.meta`.
+- `iv -lsbak [file] [--persist]` lista backups mostrando fecha y usuario cuando hay `.meta`. Por defecto lista **efímeros + persistidos**; con `--persist` lista solo persistidos.
 - `iv -lsbak file N [--persist]` muestra el contenido del slot N y sus metadatos.
 - `iv -u file` restaura desde el backup 1; `iv -u file 2` desde el backup 2.
 - `iv -diff file` compara con el backup 1; `iv -diff 2 file` con el backup 2.
-- `iv -l [file] [--persist]` lista todos los backups; con `file` filtra por archivo.
+- `iv -l [file] [--persist]` lista todos los backups; con `file` filtra por archivo. Por defecto lista **efímeros + persistidos**; con `--persist` lista solo persistidos.
 - `iv -rmbak` (o `-z`) elimina todos los backups (y sus `.meta`); `iv -rmbak file` solo los de ese archivo.
-- `iv --persist file` mueve el repo de backups de ese archivo al repo persistido; `iv --unpersist file` lo devuelve al efímero.
+- `iv --persist file` mueve el repo de backups de ese archivo al repo persistido (alias: `-persistence`); `iv --unpersist file` lo devuelve al efímero (alias: `-unpersist`).
 
 ## Seguridad
 

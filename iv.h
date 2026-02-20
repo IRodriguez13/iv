@@ -19,7 +19,7 @@
  * The user can have as many as the filesystem allows. */
 #define IV_BACKUP_SLOTS 10
 
-#define IV_VERSION "0.10.0"
+#define IV_VERSION "0.10.2"
 
 /* Options (set by main from argv) */
 typedef struct {

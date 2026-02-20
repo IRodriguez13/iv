@@ -1,4 +1,4 @@
-.TH IV 1 "February 2026" "iv 0.10.0" "User Commands"
+.TH IV 1 "February 2026" "iv 0.10.2" "User Commands"
 .SH NAME
 iv \- line-oriented text editor for scripts and pipes
 .SH SYNOPSIS
@@ -49,6 +49,14 @@ iv \- line-oriented text editor for scripts and pipes
 .BR "\-z," " \-rmbak"
 .RI [ file ]
 .RI [ \-\-persist ]
+.PP
+.B iv
+.BR "\-\-persist," " \-persistence"
+.IR file
+.PP
+.B iv
+.BR "\-\-unpersist," " \-unpersist"
+.IR file
 .PP
 .B iv
 .BR "\-i," " \-\-insert"
@@ -174,12 +182,15 @@ Prints "no backup found" and exits if that backup slot does not exist.
 .TP
 .B \-l
 List backups (path and size only). Optional \fIfile\fR filters by filename.
-If \fB\-\-persist\fR is given, list the persisted backup repository.
+By default, lists both the ephemeral repository (\fI/tmp/iv_<user>\fR) and the persisted repository (\fI~/.local/share/iv\fR).
+If \fB\-\-persist\fR is given, list only the persisted backup repository.
 .TP
 .B \-lsbak
 List backups with metadata (date and user who wrote the backup). Optional \fIfile\fR filters by filename.
 If \fIN\fR is given, print that backup slot's metadata (to stderr) and full content (to stdout).
 Metadata is stored next to the backup as \fIN.meta\fR (timestamp and username).
+By default, lists both the ephemeral repository (\fI/tmp/iv_<user>\fR) and the persisted repository (\fI~/.local/share/iv\fR).
+If \fB\-\-persist\fR is given, list only the persisted backup repository.
 .TP
 .B \-z
 .B \-rmbak
@@ -269,6 +280,8 @@ Backups are stored per file under a subdirectory derived from the repository nam
 Each backup slot is stored as \fIN.bak\fR (e.g. \fI1.bak\fR, \fI2.bak\fR, ...), with an optional \fIN.meta\fR alongside it.
 .PP
 Use \fB\-\-persist\fR with backup listing/removal commands to operate on the persisted backup repository.
+.PP
+The single-dash aliases \fB\-persistence\fR and \fB\-unpersist\fR are accepted as equivalents of \fB\-\-persist\fR and \fB\-\-unpersist\fR.
 .SH EXIT STATUS
 .TP
 .B 0
