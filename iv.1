@@ -1,4 +1,4 @@
-.TH IV 1 "February 2026" "iv 0.9.0" "User Commands"
+.TH IV 1 "February 2026" "iv 0.10.0" "User Commands"
 .SH NAME
 iv \- line-oriented text editor for scripts and pipes
 .SH SYNOPSIS
@@ -37,15 +37,18 @@ iv \- line-oriented text editor for scripts and pipes
 .B iv
 .B \-l
 .RI [ file ]
+.RI [ \-\-persist ]
 .PP
 .B iv
 .B \-lsbak
 .RI [ file ]
 .RI [ N ]
+.RI [ \-\-persist ]
 .PP
 .B iv
 .BR "\-z," " \-rmbak"
 .RI [ file ]
+.RI [ \-\-persist ]
 .PP
 .B iv
 .BR "\-i," " \-\-insert"
@@ -170,16 +173,18 @@ uses unified diff format.
 Prints "no backup found" and exits if that backup slot does not exist.
 .TP
 .B \-l
-List backups in IV_BACKUP_DIR (path and size only). Optional \fIfile\fR filters by filename.
+List backups (path and size only). Optional \fIfile\fR filters by filename.
+If \fB\-\-persist\fR is given, list the persisted backup repository.
 .TP
 .B \-lsbak
 List backups with metadata (date and user who wrote the backup). Optional \fIfile\fR filters by filename.
 If \fIN\fR is given, print that backup slot's metadata (to stderr) and full content (to stdout).
-Metadata is stored in \fIiv_file.N.meta\fR (timestamp and username).
+Metadata is stored next to the backup as \fIN.meta\fR (timestamp and username).
 .TP
 .B \-z
 .B \-rmbak
 Remove backups. Optional \fIfile\fR removes all backups for that file only (and their \fI.N.meta\fR files).
+If \fB\-\-persist\fR is given, remove backups from the persisted repository.
 .SH EDIT COMMANDS
 .TP
 .B \-i
@@ -256,14 +261,14 @@ In insert/replace text: \fB\\n\fR newline, \fB\\t\fR tab, \fB\\\\\fR backslash, 
 .SH ENVIRONMENT
 .TP
 .B IV_BACKUP_DIR
-Directory for backups (default: /tmp). Backups are stored as
-.IR iv_<filename>.1.bak ,
-.IR iv_<filename>.2.bak ,
-etc.; each edit rotates and creates a new .1.bak (up to 10 slots).
-Corresponding
-.IR iv_<filename>.N.meta
-files store timestamp and username (see
-.BR \-lsbak ).
+Backup root directory for ephemeral backups.
+Default: \fI/tmp/iv_<user>\fR.
+When set, its value is used as the ephemeral backup root.
+.PP
+Backups are stored per file under a subdirectory derived from the repository name and the file path.
+Each backup slot is stored as \fIN.bak\fR (e.g. \fI1.bak\fR, \fI2.bak\fR, ...), with an optional \fIN.meta\fR alongside it.
+.PP
+Use \fB\-\-persist\fR with backup listing/removal commands to operate on the persisted backup repository.
 .SH EXIT STATUS
 .TP
 .B 0

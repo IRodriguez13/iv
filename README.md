@@ -24,9 +24,11 @@ make clean
 | `iv -n file "pattern" --json` | Salida JSON: `{"lines":[1,5,7]}` (para jq, Python, etc.) |
 | `iv -u file [N]` | Deshace: restaura desde el backup N (por defecto 1); N=1..10 |
 | `iv -diff [-u] [N] file` | Compara backup N vs actual; `-u` = diff unificado |
-| `iv -l [file]` | Lista backups: solo ruta y tamaño (`.1.bak`, `.2.bak`, …) |
-| `iv -lsbak [file] [N]` | Lista backups **con metadatos** (fecha y usuario); si indicas N, muestra el contenido de ese slot |
-| `iv -rmbak [file]` | Elimina backups (alias: `-z`). Sin archivo: todos; con archivo: solo los de ese archivo |
+| `iv -l [file] [--persist]` | Lista backups: solo ruta y tamaño |
+| `iv -lsbak [file] [N] [--persist]` | Lista backups **con metadatos** (fecha y usuario); si indicas N, muestra el contenido de ese slot |
+| `iv -rmbak [file] [--persist]` | Elimina backups (alias: `-z`). Sin archivo: todos; con archivo: solo los de ese archivo |
+| `iv --persist file` | Mueve el repo de backups de ese archivo desde `/tmp` a `~/.local/share/iv/` |
+| `iv --unpersist file` | Mueve el repo de backups de ese archivo desde `~/.local/share/iv/` a `/tmp` |
 | `iv -V` / `iv --version` | Muestra versión |
 
 ### Edición
@@ -154,14 +156,18 @@ range.c   — parse_range
 
 ## Backup
 
-- Las copias de seguridad se guardan en `IV_BACKUP_DIR/iv_<archivo>.1.bak`, `.2.bak`, … (por defecto `/tmp`). Cada edición rota los backups y crea un nuevo `.1.bak` (hasta 10 slots por archivo).
-- Cada backup tiene un archivo de metadatos `iv_<archivo>.N.meta` con fecha (epoch) y usuario que lo escribió. `iv -lsbak [file]` lista backups mostrando fecha y usuario; `iv -lsbak file 2` muestra el contenido del backup 2 y sus metadatos.
-- Variable de entorno `IV_BACKUP_DIR` para cambiar el directorio.
+- El repo de backups puede ser **efímero** (por defecto) o **persistido**.
+- Repo efímero: root en `/tmp/iv_<user>/` por defecto. Se puede cambiar con la variable de entorno `IV_BACKUP_DIR`.
+- Repo persistido: root en `$XDG_DATA_HOME/iv` o `~/.local/share/iv/`.
+- Los backups se guardan **por archivo** dentro de un subdirectorio derivado del nombre del repo y el path del archivo.
+- Cada slot se guarda como `N.bak` (por ejemplo `1.bak`, `2.bak`, ...), y el archivo `N.meta` (si existe) guarda `epoch` + `usuario`.
+- `iv -lsbak [file] [--persist]` lista backups mostrando fecha y usuario cuando hay `.meta`.
+- `iv -lsbak file N [--persist]` muestra el contenido del slot N y sus metadatos.
 - `iv -u file` restaura desde el backup 1; `iv -u file 2` desde el backup 2.
 - `iv -diff file` compara con el backup 1; `iv -diff 2 file` con el backup 2.
-- `iv -l` lista todos los backups; `iv -l file` filtra por archivo.
-- `iv -lsbak` lista con metadatos; `iv -lsbak file N` muestra contenido y metadatos del slot N.
-- `iv -rmbak` (o `-z`) elimina todos los backups (y sus .meta); `iv -rmbak file` solo los de ese archivo.
+- `iv -l [file] [--persist]` lista todos los backups; con `file` filtra por archivo.
+- `iv -rmbak` (o `-z`) elimina todos los backups (y sus `.meta`); `iv -rmbak file` solo los de ese archivo.
+- `iv --persist file` mueve el repo de backups de ese archivo al repo persistido; `iv --unpersist file` lo devuelve al efímero.
 
 ## Seguridad
 

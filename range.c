@@ -9,51 +9,67 @@
  * -1 means "from start", -2 means "2nd from end", etc.
  * Returns 0 on success, -1 on error.
  */
-int parse_range(const char *spec, int count, int *start, int *end) {
-    if (!spec || !*spec) return -1;
+int parse_range(const char *spec, int count, int *start, int *end)
+{
+    if (!spec || !*spec)
+        return -1;
 
     const char *p = spec;
     int s = 0, e = 0;
     int s_neg = 0, e_neg = 0;
 
     /* Parse start */
-    if (*p == '-') {
+    if (*p == '-')
+    {
         p++;
         s_neg = 1;
-        if (!*p) return -1;
+        if (!*p)
+            return -1;
     }
-    while (*p && isdigit(*p)) {
+    while (*p && isdigit(*p))
+    {
         s = s * 10 + (*p - '0');
         p++;
     }
 
-    if (!*p) {
+    if (!*p)
+    {
         /* Single number: "5" or "-3" */
-        if (s_neg) {
+        if (s_neg)
+        {
             *start = count - s + 1;
             *end = *start;
-        } else {
+        }
+        else
+        {
             *start = s;
             *end = s;
         }
-        if (*start < 1) *start = 1;
-        if (*end > count) *end = count;
+        if (*start < 1)
+            *start = 1;
+        if (*end > count)
+            *end = count;
+        
         return 0;
     }
 
-    if (*p != '-') return -1;
+    if (*p != '-')
+        return -1;
     p++;
 
     /* Parse end */
-    if (*p == '-') {
+    if (*p == '-')
+    {
         p++;
         e_neg = 1;
     }
-    while (*p && isdigit(*p)) {
+    while (*p && isdigit(*p))
+    {
         e = e * 10 + (*p - '0');
         p++;
     }
-    if (*p) return -1;
+    if (*p)
+        return -1;
 
     if (s_neg)
         *start = (s == 0) ? 1 : count - s + 1;
@@ -65,8 +81,15 @@ int parse_range(const char *spec, int count, int *start, int *end) {
     else
         *end = e;
 
-    if (*start < 1) *start = 1;
-    if (*end > count) *end = count;
-    if (*start > *end) { int t = *start; *start = *end; *end = t; }
+    if (*start < 1)
+        *start = 1;
+    if (*end > count)
+        *end = count;
+    if (*start > *end)
+    {
+        int t = *start;
+        *start = *end;
+        *end = t;
+    }
     return 0;
 }
