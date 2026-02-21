@@ -10,7 +10,7 @@ _iv()
     cur=${COMP_WORDS[COMP_CWORD]}
     prev=${COMP_WORDS[COMP_CWORD-1]}
 
-    local cmds="-h --help -V --version -v -va -wc -n -u -diff -i -insert -a -p -pi -d -delete -r -replace -s -l -lb -lsbak -rmbak -z"
+    local cmds="-h --help -V --version -v -va -wc -n -nv -u -diff -i -insert -a -p -pi -d -delete -r -replace -s -l -lb -lsbak -rmbak -z"
     local opts="--dry-run --no-backup --no-numbers -g -E --regex -q --stdout --json --persist --unpersist -persistence -unpersist -m -F -e"
 
     # If completing the first argument (the main command/flag)

@@ -34,6 +34,7 @@ Para habilitarlo permanente, agregalo a tu `~/.bashrc`.
 | `iv -wc file` | Cuenta las líneas del archivo |
 | `iv -n file "pattern"` | Números de línea donde aparece el patrón |
 | `iv -n file "pattern" --json` | Salida JSON: `{"lines":[1,5,7]}` (para jq, Python, etc.) |
+| `iv -nv file "pattern"` | Muestra las líneas donde aparece el patrón (tipo grep), con número de línea |
 | `iv -u file [N]` | Deshace: restaura desde el backup N (por defecto 1); N=1..10 |
 | `iv -diff [-u] [N] file` | Compara backup N vs actual; `-u` = diff unificado |
 | `iv -l [file] [--persist]` | Lista backups: solo ruta y tamaño. Por defecto lista **efímeros + persistidos**; con `--persist` lista solo persistidos |
@@ -105,6 +106,7 @@ iv -pi main.c 1 "#include <foo.h>"         # insertar línea 1 sin reemplazar (b
 iv -p f1.c f2.c snippet.c                 # parchear múltiples archivos
 iv -s file "[0-9]+" "X" -E                 # regex
 iv -s file "a" "b" -e "c" "d"             # múltiples sustituciones
+iv -nv file "TODO"                          # ver líneas que matchean (grep rápido)
 cat file | iv -s - "old" "new" --stdout    # pipeline sin modificar archivo
 ```
 

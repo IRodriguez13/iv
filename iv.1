@@ -1,4 +1,4 @@
-.TH IV 1 "February 2026" "iv 0.10.2" "User Commands"
+.TH IV 1 "February 2026" "iv 0.10.3" "User Commands"
 .SH NAME
 iv \- line-oriented text editor for scripts and pipes
 .SH SYNOPSIS
@@ -22,6 +22,12 @@ iv \- line-oriented text editor for scripts and pipes
 .IR file
 .IR pattern
 .RI [ \-\-json ]
+.PP
+.B iv
+.B \-nv
+.RI [ \-\-no\-numbers ]
+.IR file
+.IR pattern
 .PP
 .B iv
 .B \-u
@@ -165,7 +171,11 @@ Count lines.
 .B \-n
 Print line numbers where \fIpattern\fR appears.
 .B \-\-json
-outputs {\"lines\":[1,5,7]} for jq/Python integration.
+outputs {"lines":[1,5,7]} for jq/Python integration.
+.TP
+.B \-nv
+Print matching lines where \fIpattern\fR appears.
+By default prints with line numbers; use \fB\-\-no\-numbers\fR to print only the line contents.
 .TP
 .B \-u
 Undo: restore file from backup slot

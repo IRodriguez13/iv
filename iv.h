@@ -19,7 +19,7 @@
  * The user can have as many as the filesystem allows. */
 #define IV_BACKUP_SLOTS 10
 
-#define IV_VERSION "0.10.2"
+#define IV_VERSION "0.10.3"
 
 /* Options (set by main from argv) */
 typedef struct {
@@ -118,6 +118,7 @@ void show_file(char *lines[], int count, int no_numbers);
 void show_range(char *lines[], int count, int start, int end, int no_numbers);
 int  wc_lines(char *lines[], int count);
 void find_line_numbers(char *lines[], int count, const char *pattern, int json);
+void find_matching_lines(char *lines[], int count, const char *pattern, int no_numbers);
 int  stream_file_with_numbers(const char *path);
 
 

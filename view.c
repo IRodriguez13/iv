@@ -62,6 +62,22 @@ void find_line_numbers(char *lines[], int count, const char *pattern, int json)
         printf("]}\n");
 }
 
+void find_matching_lines(char *lines[], int count, const char *pattern, int no_numbers)
+{
+    if (!pattern || !*pattern)
+        return;
+    for (int i = 0; i < count; i++)
+    {
+        if (strstr(lines[i], pattern))
+        {
+            if (no_numbers)
+                printf("%s", lines[i]);
+            else
+                printf("%4d | %s", i + 1, lines[i]);
+        }
+    }
+}
+
 int stream_file_with_numbers(const char *path)
 {
     FILE *f = fopen(path, "r");

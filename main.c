@@ -13,6 +13,7 @@ static void usage(const char *prog)
     fprintf(stderr, "  %s -va [--no-numbers] start-end file\n", prog);
     fprintf(stderr, "  %s -wc file\n", prog);
     fprintf(stderr, "  %s -n file \"pattern\" [--json]\n", prog);
+    fprintf(stderr, "  %s -nv file \"pattern\" [--no-numbers]\n", prog);
     fprintf(stderr, "  %s -u file [N]\n", prog);
     fprintf(stderr, "  %s -diff [-u] [N] file\n", prog);
     fprintf(stderr, "  %s -i|-insert file [start-end] \"text\" [-q] [--dry-run] [--no-backup]\n", prog);
@@ -610,6 +611,20 @@ int main(int argc, char *argv[])
             goto done;
         }
         find_line_numbers(lines, count, argv[a], opts.json);
+        goto done;
+    }
+
+    /* ── -nv ── */
+    if (strcmp(flag, "-nv") == 0)
+    {
+        int a = next_arg(argc, argv, 3);
+        if (a < 0)
+        {
+            fprintf(stderr, "Usage: -nv file pattern [--no-numbers]\n");
+            ret = 1;
+            goto done;
+        }
+        find_matching_lines(lines, count, argv[a], opts.no_numbers);
         goto done;
     }
 
