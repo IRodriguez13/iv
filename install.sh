@@ -69,4 +69,15 @@ echo "  bash: needs bash-completion package"
 echo "  zsh:  fpath=(\$HOME/.local/share/zsh/site-functions \$fpath) before compinit"
 echo "  fish: auto-loads vendor_completions.d"
 echo ""
-echo "Ensure \$PREFIX/bin is in PATH."
+if command -v iv >/dev/null 2>&1; then
+	installed="$("$PREFIX/bin/iv" --version 2>/dev/null | head -1)"
+	active="$(iv --version 2>/dev/null | head -1)"
+	if [[ "$installed" != "$active" ]]; then
+		echo "WARNING: \`iv\` in PATH is not the one just installed."
+		echo "  installed: $PREFIX/bin/iv → $installed"
+		echo "  active:    $(command -v iv) → $active"
+		echo "  Put \$PREFIX/bin before /usr/bin in PATH, or remove the old binary (often /usr/bin/iv)."
+	fi
+fi
+echo ""
+echo "Ensure \$PREFIX/bin is in PATH (before /usr/bin if both exist)."
