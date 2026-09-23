@@ -1,18 +1,71 @@
-#!/bin/sh
-# Install iv to /usr/bin and man page to /usr/share/man/man1
+#!/usr/bin/env bash
+# install.sh — build and install iv
+set -euo pipefail
 
-set -e
-cd "$(dirname "$0")"
+PREFIX="${PREFIX:-${HOME}/.local}"
+SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-echo "Building iv..."
-make
+usage() {
+	cat <<EOF
+Usage: ./install.sh [options]
 
-echo "Installing iv to /usr/bin..."
-sudo cp iv /usr/bin/iv
+Options:
+  --prefix PATH   install prefix (default: \$HOME/.local)
+  --uninstall     remove installed binary, man page, and completions
+  -h, --help      show this help
 
-echo "Installing man page to /usr/share/man/man1..."
-sudo mkdir -p /usr/share/man/man1
-sudo cp iv.1 /usr/share/man/man1/iv.1
-sudo gzip -f /usr/share/man/man1/iv.1 2>/dev/null || true
+Examples:
+  ./install.sh
+  PREFIX=/usr/local ./install.sh
+  ./install.sh --uninstall
+EOF
+}
 
-echo "iv installed successfully."
+uninstall=false
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+		--prefix)
+			PREFIX="$2"
+			shift 2
+			;;
+		--uninstall)
+			uninstall=true
+			shift
+			;;
+		-h|--help)
+			usage
+			exit 0
+			;;
+		*)
+			echo "install.sh: unknown option: $1" >&2
+			usage >&2
+			exit 1
+			;;
+	esac
+done
+
+cd "$SRC_DIR"
+
+if $uninstall; then
+	make PREFIX="$PREFIX" uninstall
+	echo "Uninstalled from $PREFIX"
+	exit 0
+fi
+
+make clean all
+make PREFIX="$PREFIX" install
+
+echo ""
+echo "Installed:"
+echo "  $PREFIX/bin/iv"
+echo "  $PREFIX/share/man/man1/iv.1"
+echo "  $PREFIX/share/bash-completion/completions/iv"
+echo "  $PREFIX/share/zsh/site-functions/_iv"
+echo "  $PREFIX/share/fish/vendor_completions.d/iv.fish"
+echo ""
+echo "Shell completions (bash / zsh / fish):"
+echo "  bash: needs bash-completion package"
+echo "  zsh:  fpath=(\$HOME/.local/share/zsh/site-functions \$fpath) before compinit"
+echo "  fish: auto-loads vendor_completions.d"
+echo ""
+echo "Ensure \$PREFIX/bin is in PATH."

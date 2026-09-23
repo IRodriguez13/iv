@@ -1,2 +1,6 @@
-.cursor/rules/commits.mdc
 *.o
+/iv
+/build/
+*.swp
+.DS_Store
+.cursor/

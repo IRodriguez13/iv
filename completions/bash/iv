@@ -1,0 +1,49 @@
+# bash completion for iv(1) -*- shell-script -*-
+
+_iv()
+{
+	local cur prev
+	local words cword
+
+	_init_completion -n : || return
+
+	cur=${COMP_WORDS[COMP_CWORD]}
+	prev=${COMP_WORDS[COMP_CWORD-1]}
+
+	local cmds="-h --help -V --version -v -va -wc -n -nv -u -diff -i -insert -a -p -pi -d -delete -r -replace -s -l -lsbak -rmbak -z --persist --unpersist -persistence -unpersist"
+	local opts="--dry-run --no-backup --no-numbers -g -E --regex -q --stdout --json --persist --unpersist -persistence -unpersist -m -F -e"
+
+	if [[ ${COMP_CWORD} -eq 1 ]]; then
+		COMPREPLY=( $(compgen -W "${cmds}" -- "${cur}") )
+		return
+	fi
+
+	case "${prev}" in
+		-m|-F|-e)
+			return
+			;;
+		--persist|--unpersist|-persistence|-unpersist)
+			_filedir
+			return
+			;;
+	esac
+
+	case "${COMP_WORDS[1]}" in
+		-u|-diff|-lsbak)
+			if [[ "${cur}" =~ ^[0-9]*$ ]]; then
+				COMPREPLY=( $(compgen -W "1 2 3 4 5 6 7 8 9 10" -- "${cur}") )
+				return
+			fi
+			;;
+	esac
+
+	if [[ "${cur}" == -* ]]; then
+		COMPREPLY=( $(compgen -W "${cmds} ${opts}" -- "${cur}") )
+		return
+	fi
+
+	_filedir
+} &&
+	complete -F _iv iv
+
+# ex: filetype=sh

@@ -1,48 +1,47 @@
-# Makefile for iv - minimal modular editor
+PREFIX ?= $(HOME)/.local
+BINDIR ?= $(PREFIX)/bin
+MANDIR ?= $(PREFIX)/share/man/man1
+BASH_COMPLETION_DIR ?= $(PREFIX)/share/bash-completion/completions
+ZSH_COMPLETION_DIR ?= $(PREFIX)/share/zsh/site-functions
+FISH_COMPLETION_DIR ?= $(PREFIX)/share/fish/vendor_completions.d
 
-CC = gcc
-CFLAGS = -Wall -O2
-TARGET = iv
-PREFIX = /usr
-BINDIR = $(PREFIX)/bin
-# Usa pkg-config para detectar la ubicación correcta (recomendado)
-COMPLETION_DIR = $(shell pkg-config --variable=completionsdir bash-completion 2>/dev/null || echo /etc/bash_completion.d)
+CC ?= gcc
+CFLAGS ?= -Wall -Wextra -O2 -D_POSIX_C_SOURCE=200809L
+LDFLAGS ?=
 
 SRCS = main.c view.c edit.c range.c
 OBJS = $(SRCS:.c=.o)
+TARGET = iv
+
+.PHONY: all clean install uninstall test
 
 all: $(TARGET)
 
 $(TARGET): $(OBJS)
-	$(CC) $(CFLAGS) -o $@ $^
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 %.o: %.c iv.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-install: $(TARGET) install-completions
-	install -d $(DESTDIR)$(BINDIR)
-	install -m 755 $(TARGET) $(DESTDIR)$(BINDIR)/$(TARGET)
-	@echo ""
-	@echo "Completions installed. They will auto-load in NEW shells."
-	@echo "To activate in current shell: source $(COMPLETION_DIR)/iv"
-
-install-completions:
-	@if [ -f completions/iv.bash ]; then \
-		install -d $(DESTDIR)$(COMPLETION_DIR); \
-		install -m 644 completions/iv.bash $(DESTDIR)$(COMPLETION_DIR)/iv; \
-		echo "✓ Completions installed to $(COMPLETION_DIR)/iv"; \
-	else \
-		echo "Warning: completions/iv.bash not found"; \
-	fi
+install: $(TARGET)
+	install -d "$(BINDIR)" "$(MANDIR)" \
+		"$(BASH_COMPLETION_DIR)" "$(ZSH_COMPLETION_DIR)" "$(FISH_COMPLETION_DIR)"
+	install -m 755 $(TARGET) "$(BINDIR)/$(TARGET)"
+	install -m 644 iv.1 "$(MANDIR)/iv.1"
+	install -m 644 completions/bash/iv "$(BASH_COMPLETION_DIR)/iv"
+	install -m 644 completions/zsh/_iv "$(ZSH_COMPLETION_DIR)/_iv"
+	install -m 644 completions/fish/iv.fish "$(FISH_COMPLETION_DIR)/iv.fish"
+	-command -v mandb >/dev/null 2>&1 && mandb -q "$(MANDIR)" 2>/dev/null || true
 
 uninstall:
-	rm -f $(DESTDIR)$(BINDIR)/$(TARGET)
-	rm -f $(DESTDIR)$(COMPLETION_DIR)/iv
+	rm -f "$(BINDIR)/$(TARGET)" "$(MANDIR)/iv.1" \
+		"$(BASH_COMPLETION_DIR)/iv" \
+		"$(ZSH_COMPLETION_DIR)/_iv" \
+		"$(FISH_COMPLETION_DIR)/iv.fish"
 
-check-completions:
-	@bash -n $(COMPLETION_DIR)/iv && echo "✓ Syntax OK" || echo "✗ Syntax error"
+test: $(TARGET)
+	@./tests/smoke.sh "$(CURDIR)/$(TARGET)"
+	@./tests/completions.sh
 
 clean:
 	rm -f $(TARGET) $(OBJS)
-
-.PHONY: all install install-completions uninstall check-completions clean

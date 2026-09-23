@@ -6,21 +6,32 @@ Editor de texto orientado a líneas para la línea de comandos. Sin dependencias
 
 ```bash
 make
-make install   # instala en /usr/bin
+make test
+make install          # default: ~/.local
+PREFIX=/usr/local make install
+./install.sh
 make clean
 ```
 
-## Autocompletado (bash)
+## Shell completions
 
-Hay un script de completion en `completions/iv.bash`.
+`make install` instala completions para **bash**, **zsh** y **fish**:
 
-Para habilitarlo en tu sesión actual:
+| Shell | Path (default `PREFIX=~/.local`) |
+|-------|----------------------------------|
+| bash  | `~/.local/share/bash-completion/completions/iv` |
+| zsh   | `~/.local/share/zsh/site-functions/_iv` |
+| fish  | `~/.local/share/fish/vendor_completions.d/iv.fish` |
+
+**zsh** — en `~/.zshrc` antes de `compinit`:
 
 ```bash
-source completions/iv.bash
+fpath=(~/.local/share/zsh/site-functions $fpath)
+autoload -Uz compinit && compinit
 ```
 
-Para habilitarlo permanente, agregalo a tu `~/.bashrc`.
+**bash** — requiere el paquete `bash-completion`.  
+**fish** — carga automática desde `vendor_completions.d`.
 
 ## Comandos
 
