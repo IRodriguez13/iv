@@ -1,8 +1,11 @@
 # iv
 
-Editor de texto orientado a líneas para la línea de comandos. Sin dependencias externas. Pensado para composición con pipes y scripts.
+Line-oriented text editor for the command line. No external dependencies.
+Designed for composition with pipes and scripts.
 
-## Compilación
+> Spanish documentation: [README.es.md](README.es.md)
+
+## Build
 
 ```bash
 make
@@ -15,7 +18,7 @@ make clean
 
 ## Shell completions
 
-`make install` instala completions para **bash**, **zsh** y **fish**:
+`make install` installs completions for **bash**, **zsh**, and **fish**:
 
 | Shell | Path (default `PREFIX=~/.local`) |
 |-------|----------------------------------|
@@ -23,187 +26,169 @@ make clean
 | zsh   | `~/.local/share/zsh/site-functions/_iv` |
 | fish  | `~/.local/share/fish/vendor_completions.d/iv.fish` |
 
-**zsh** — en `~/.zshrc` antes de `compinit`:
+**zsh** — in `~/.zshrc` before `compinit`:
 
 ```bash
 fpath=(~/.local/share/zsh/site-functions $fpath)
 autoload -Uz compinit && compinit
 ```
 
-**bash** — requiere el paquete `bash-completion`.  
-**fish** — carga automática desde `vendor_completions.d`.
+**bash** — requires the `bash-completion` package.  
+**fish** — auto-loads from `vendor_completions.d`.
 
-## Comandos
+## Commands
 
-### Visualización
+### View
 
-| Comando | Descripción |
+| Command | Description |
 |---------|-------------|
-| `iv -v file` | Muestra el archivo completo con números de línea |
-| `iv -v file --no-numbers` | Muestra el archivo sin números de línea |
-| `iv -va start-end file` | Muestra el rango de líneas indicado |
-| `iv -wc file` | Cuenta las líneas del archivo |
-| `iv -n file "pattern"` | Números de línea donde aparece el patrón |
-| `iv -n file "pattern" --json` | Salida JSON: `{"lines":[1,5,7]}` (para jq, Python, etc.) |
-| `iv -nv file "pattern"` | Muestra las líneas donde aparece el patrón (tipo grep), con número de línea |
-| `iv -u file [N]` | Deshace: restaura desde el backup N (por defecto 1); N=1..10 |
-| `iv -diff [-u] [N] file` | Compara backup N vs actual; `-u` = diff unificado |
-| `iv -l [file] [--persist]` | Lista backups: solo ruta y tamaño. Por defecto lista **efímeros + persistidos**; con `--persist` lista solo persistidos |
-| `iv -lsbak [file] [N] [--persist]` | Lista backups **con metadatos** (fecha y usuario). Por defecto lista **efímeros + persistidos**; con `--persist` lista solo persistidos. Si indicas N, muestra el contenido de ese slot |
-| `iv -rmbak [file] [--persist]` | Elimina backups (alias: `-z`). Sin archivo: todos; con archivo: solo los de ese archivo |
-| `iv --persist file` | Mueve el repo de backups de ese archivo desde `/tmp` a `~/.local/share/iv/` (alias: `-persistence`) |
-| `iv --unpersist file` | Mueve el repo de backups de ese archivo desde `~/.local/share/iv/` a `/tmp` (alias: `-unpersist`) |
-| `iv -V` / `iv --version` | Muestra versión |
+| `iv -v file` | Show entire file with line numbers |
+| `iv -v file --no-numbers` | Show file without line numbers |
+| `iv -va start-end file` | Show line range |
+| `iv -wc file` | Count lines |
+| `iv -n file "pattern"` | Line numbers where pattern appears |
+| `iv -n file "pattern" --json` | JSON output: `{"lines":[1,5,7]}` (for jq, Python, etc.) |
+| `iv -nv file "pattern"` | Show matching lines (grep-like), with line numbers |
+| `iv -u file [N]` | Undo: restore from backup slot N (default 1); N=1..10 |
+| `iv -diff [-u] [N] file` | Compare backup N vs current; `-u` = unified diff |
+| `iv -l [file] [--persist]` | List backups (path and size). Default: **ephemeral + persisted**; with `--persist` only persisted |
+| `iv -lsbak [file] [N] [--persist]` | List backups **with metadata** (date and user). With N, show slot content |
+| `iv -rmbak [file] [--persist]` | Remove backups (alias: `-z`) |
+| `iv --persist file` | Move backup repo from `/tmp` to `~/.local/share/iv/` |
+| `iv --unpersist file` | Move backup repo from `~/.local/share/iv/` to `/tmp` |
+| `iv -V` / `iv --version` | Show version |
 
-### Edición
+### Edit
 
-| Comando | Descripción |
+| Command | Description |
 |---------|-------------|
-| `iv -i file "texto"` | Inserta texto al final (alias: `-insert`) |
-| `iv -i file start-end "texto"` | Inserta texto antes de la línea `start` |
-| `iv -a file "texto"` | Añade texto al final del archivo |
-| `iv -p file [file...] [range] content` | Parchea uno o más archivos; range opcional |
-| `iv -pi file [file...] line content` | Patch insert: inserta antes de la línea indicada (no reemplaza); la línea y el resto bajan |
-| `iv -d file [start-end]` | Elimina líneas (alias: `-delete`) |
-| `iv -d file -m "pattern"` | Elimina solo líneas que coinciden con el patrón |
-| `iv -r file [start-end] "texto"` | Reemplaza líneas (alias: `-replace`) |
-| `iv -r file -m "pattern" "texto"` | Reemplaza solo líneas que coinciden |
-| `iv -s file patrón reemplazo` | Sustituye (literal) |
-| `iv -s file patrón reemplazo -m "filter"` | Sustituye solo en líneas que contienen "filter" |
-| `iv -s file -F ',' 2 "X"` | Sustituye campo 2 con "X" (CSV/TSV) |
-| `iv -s file patrón reemplazo -e pat2 repl2` | Múltiples sustituciones (como sed -e) |
-| `iv -s file patrón reemplazo -E` | Sustituye con regex |
-| `iv -s file patrón reemplazo -g` | Sustituye todas las ocurrencias |
+| `iv -i file "text"` | Insert text at end (alias: `-insert`) |
+| `iv -i file start-end "text"` | Insert text before line `start` |
+| `iv -a file "text"` | Append text at end of file |
+| `iv -p file [file...] [range] content` | Patch one or more files; optional range |
+| `iv -pi file [file...] line content` | Patch insert: insert before line (does not replace) |
+| `iv -d file [start-end]` | Delete lines (alias: `-delete`) |
+| `iv -d file -m "pattern"` | Delete only matching lines |
+| `iv -r file [start-end] "text"` | Replace lines (alias: `-replace`) |
+| `iv -r file -m "pattern" "text"` | Replace only matching lines |
+| `iv -s file pattern replacement` | Substitute (literal) |
+| `iv -s file pattern replacement -m "filter"` | Substitute only on lines containing filter |
+| `iv -s file -F ',' 2 "X"` | Replace field 2 with "X" (CSV/TSV) |
+| `iv -s file pat repl -e pat2 repl2` | Multiple substitutions (like sed -e) |
+| `iv -s file pattern replacement -E` | Regex substitute |
+| `iv -s file pattern replacement -g` | Replace all matches per line |
 
-### Opciones globales
+### Global options
 
-| Opción | Efecto |
+| Option | Effect |
 |--------|--------|
-| `--dry-run` | Muestra qué se haría sin modificar el archivo |
-| `--no-backup` | No crea archivo `.bak` antes de editar |
-| `--no-numbers` | Salida sin números de línea (solo con `-v` y `-va`) |
-| `-q` | Suprime la salida tipo tee en `-i`, `-a`, `-r`, `-p` |
-| `--stdout` | Escribe resultado a stdout sin modificar el archivo (composable en pipelines) |
+| `--dry-run` | Show what would be done without modifying the file |
+| `--no-backup` | Skip backup before edit |
+| `--no-numbers` | Omit line numbers (with `-v` and `-va` only) |
+| `-q` | Suppress tee-like output on `-i`, `-a`, `-r`, `-p` |
+| `--stdout` | Write to stdout without modifying the file (pipeline-friendly) |
 
-## Rangos
+## Ranges
 
-Los rangos son 1-based. Sintaxis:
+Ranges are 1-based:
 
-| Formato | Significado |
-|--------|-------------|
-| `1-5` | Líneas 1 a 5 |
-| `5` | Línea 5 |
-| `-3` | Tercera línea contando desde el final |
-| `-3--1` | Últimas tres líneas |
-| `-5-` | Últimas cinco líneas |
-| `2-` | Desde la línea 2 hasta el final |
+| Format | Meaning |
+|--------|---------|
+| `1-5` | Lines 1 through 5 |
+| `5` | Line 5 |
+| `-3` | Third line from end |
+| `-3--1` | Last three lines |
+| `-5-` | Last five lines |
+| `2-` | From line 2 to end |
 
-## Entrada: stdin o archivo
+## Text input: stdin, file, or literal
 
-El argumento de texto en `-i`, `-a` y `-r` admite tres formas:
+Text arguments for `-i`, `-a`, and `-r` accept:
 
-| Argumento | Comportamiento |
-|-----------|----------------|
-| `-` | Lee desde stdin |
-| Ruta a archivo existente | Lee el contenido del archivo |
-| Cualquier otro texto | Se usa como literal |
-
-```bash
-echo "línea nueva" | iv -p file           # sin arg = stdin
-iv -p main.c snippet.c                    # append archivo
-iv -p main.c 5 snippet.c                   # insertar en línea 5
-iv -p main.c 1-3 plantilla.txt             # reemplazar líneas 1-3
-iv -pi main.c 1 "#include <foo.h>"         # insertar línea 1 sin reemplazar (baja el resto)
-iv -p f1.c f2.c snippet.c                 # parchear múltiples archivos
-iv -s file "[0-9]+" "X" -E                 # regex
-iv -s file "a" "b" -e "c" "d"             # múltiples sustituciones
-iv -nv file "TODO"                          # ver líneas que matchean (grep rápido)
-cat file | iv -s - "old" "new" --stdout    # pipeline sin modificar archivo
-```
-
-## Secuencias de escape
-
-En el texto de inserción o reemplazo se interpretan:
-
-| Secuencia | Carácter |
-|-----------|----------|
-| `\n` | Nueva línea |
-| `\t` | Tabulador |
-| `\\` | Barra invertida |
-| `\r` | Retorno de carro |
-
-Ejemplo:
+| Argument | Behavior |
+|----------|----------|
+| `-` | Read from stdin |
+| Path to existing file | Read file content |
+| Any other text | Used as literal |
 
 ```bash
-iv -i file "línea1\nlínea2\nlínea3"
+echo "new line" | iv -p file
+iv -p main.c snippet.c
+iv -p main.c 5 snippet.c
+iv -p main.c 1-3 template.txt
+iv -pi main.c 1 "#include <foo.h>"
+iv -p f1.c f2.c snippet.c
+iv -s file "[0-9]+" "X" -E
+iv -s file "a" "b" -e "c" "d"
+iv -nv file "TODO"
+cat file | iv -s - "old" "new" --stdout
 ```
 
-## Comportamiento tipo tee
+## Escape sequences
 
-`-insert`, `-replace`, `-a`, `-p` y `-pi` escriben en stdout el texto añadido, de forma similar a `tee`. Usa `-q` para suprimir esta salida.
+In insert/replace text:
 
-## Pipelines con --stdout
+| Sequence | Character |
+|----------|-----------|
+| `\n` | Newline |
+| `\t` | Tab |
+| `\\` | Backslash |
+| `\r` | Carriage return |
 
-Con `--stdout`, el resultado se escribe a stdout sin modificar el archivo. Permite encadenar operaciones:
+## Tee-like behavior
+
+`-insert`, `-replace`, `-a`, `-p`, and `-pi` echo added text to stdout (like `tee`). Use `-q` to suppress.
+
+## Pipelines with `--stdout`
 
 ```bash
 iv -s file "a" "b" --stdout | iv -s - "b" "c" --stdout
 ```
 
-## Estructura del código
+## Code layout
 
 ```
-iv.h      — Declaraciones, constantes, IvOpts
-main.c    — Entrada, parseo de argumentos, dispatch
-view.c    — show_file, show_range, wc_lines, find_line_numbers, stream_file_with_numbers
-edit.c    — backup, apply_patch, search_replace, search_replace_regex, list_backups
+iv.h      — declarations, constants, IvOpts
+main.c    — entry, argument parsing, dispatch
+view.c    — show_file, show_range, wc_lines, find_line_numbers
+edit.c    — backup, apply_patch, search_replace, list_backups
 range.c   — parse_range
 ```
 
-## Formato de diff
+## Man pages
 
-`iv -diff file` (o `iv -diff 2 file` para comparar con el backup 2) muestra antes y después con numeración de línea. Con `-u` usa formato unificado (compatible con `diff -u`):
+| Locale | Path |
+|--------|------|
+| English (default) | `iv.1` → `man iv` |
+| Spanish | `man/es/iv.1` → `man -L es iv` (when installed) |
 
-```
---- /tmp/iv_demo.c.bak (anterior)
-   1 | #include <stdio.h>
-   2 | int main(void) {
-   3 |     return 0;
-   4 | }
+## Diff format
 
---- demo.c (actual)
-   1 | // v1.0
-   2 | #include <stdio.h>
-   3 | int main(void) {
-   4 |     return 0;
-   5 | }
-```
+`iv -diff file` compares backup 1 vs current. `-u` uses unified diff (`diff -u` compatible).
 
 ## Backup
 
-- El repo de backups puede ser **efímero** (por defecto) o **persistido**.
-- Repo efímero: root en `/tmp/iv_<user>/` por defecto. Se puede cambiar con la variable de entorno `IV_BACKUP_DIR`.
-- El repo persistido: root en `$XDG_DATA_HOME/iv` o `~/.local/share/iv/`.
-- Los backups se guardan **por archivo** dentro de un subdirectorio derivado del nombre del repo y el path del archivo.
-- Cada slot se guarda como `N.bak` (por ejemplo `1.bak`, `2.bak`, ...), y el archivo `N.meta` (si existe) guarda `epoch` + `usuario`.
-- `iv -lsbak [file] [--persist]` lista backups mostrando fecha y usuario cuando hay `.meta`. Por defecto lista **efímeros + persistidos**; con `--persist` lista solo persistidos.
-- `iv -lsbak file N [--persist]` muestra el contenido del slot N y sus metadatos.
-- `iv -u file` restaura desde el backup 1; `iv -u file 2` desde el backup 2.
-- `iv -diff file` compara con el backup 1; `iv -diff 2 file` con el backup 2.
-- `iv -l [file] [--persist]` lista todos los backups; con `file` filtra por archivo. Por defecto lista **efímeros + persistidos**; con `--persist` lista solo persistidos.
-- `iv -rmbak` (o `-z`) elimina todos los backups (y sus `.meta`); `iv -rmbak file` solo los de ese archivo.
-- `iv --persist file` mueve el repo de backups de ese archivo al repo persistido (alias: `-persistence`); `iv --unpersist file` lo devuelve al efímero (alias: `-unpersist`).
+- Backups may be **ephemeral** (default) or **persisted**.
+- Ephemeral root: `/tmp/iv_<user>/` (override with `IV_BACKUP_DIR`).
+- Persisted root: `$XDG_DATA_HOME/iv` or `~/.local/share/iv/`.
+- Per-file subdirectories; slots as `N.bak` with optional `N.meta` (epoch + user).
+- `iv -u file` restores slot 1; `iv -u file 2` restores slot 2.
+- `iv --persist file` / `iv --unpersist file` move backup storage.
 
-## Seguridad
+## Safety
 
-- **Archivos binarios**: iv rechaza editar archivos que contienen bytes nulos para evitar corrupción.
+- **Binary files**: iv refuses to edit files containing NUL bytes.
 
-## Códigos de salida
+## Exit codes
 
-- `0`: éxito
-- `1`: error (archivo binario, rango inválido, uso incorrecto, etc.)
+- `0`: success
+- `1`: error (binary file, invalid range, usage error, etc.)
 
-## Límites
+## Limits
 
-- Líneas: array dinámico (sin límite fijo)
-- Longitud de línea: sin límite (usa `getline` POSIX)
+- Lines: dynamic array (no fixed cap)
+- Line length: unbounded (`getline` POSIX)
+
+## License
+
+GPLv3+ — see [LICENSE](LICENSE).

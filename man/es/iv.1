@@ -1,0 +1,294 @@
+.TH IV 1 "Septiembre 2026" "iv 0.10.5" "Comandos de usuario"
+.SH NOMBRE
+iv \- editor de texto orientado a líneas para scripts y tuberías
+.SH SINOPSIS
+.B iv
+.B \-v
+.RI [ \-\-no\-numbers ]
+.IR archivo
+.PP
+.B iv
+.B \-va
+.RI [ \-\-no\-numbers ]
+.IR inicio\-fin
+.IR archivo
+.PP
+.B iv
+.B \-wc
+.IR archivo
+.PP
+.B iv
+.B \-n
+.IR archivo
+.IR patrón
+.RI [ \-\-json ]
+.PP
+.B iv
+.B \-nv
+.RI [ \-\-no\-numbers ]
+.IR archivo
+.IR patrón
+.PP
+.B iv
+.B \-u
+.IR archivo
+.RI [ N ]
+.PP
+.B iv
+.B \-diff
+.RI [ \-u ]
+.RI [ N ]
+.IR archivo
+.PP
+.B iv
+.B \-l
+.RI [ archivo ]
+.RI [ \-\-persist ]
+.PP
+.B iv
+.B \-lsbak
+.RI [ archivo ]
+.RI [ N ]
+.RI [ \-\-persist ]
+.PP
+.B iv
+.BR "\-z," " \-rmbak"
+.RI [ archivo ]
+.RI [ \-\-persist ]
+.PP
+.B iv
+.BR "\-\-persist," " \-persistence"
+.IR archivo
+.PP
+.B iv
+.BR "\-\-unpersist," " \-unpersist"
+.IR archivo
+.PP
+.B iv
+.BR "\-i," " \-\-insert"
+.IR archivo
+.RI [ inicio\-fin ]
+.IR "texto"
+.RI [ \-q ]
+.RI [ \-\-dry\-run ]
+.RI [ \-\-no\-backup ]
+.PP
+.B iv
+.B \-a
+.IR archivo
+.IR "texto"
+.RI [ \-q ]
+.PP
+.B iv
+.B \-p
+.IR archivo
+.RI [ archivo... ]
+.RI [ rango ]
+.IR contenido
+.RI [ \-q ]
+.PP
+.B iv
+.B \-pi
+.IR archivo
+.RI [ archivo... ]
+.IR línea
+.IR contenido
+.RI [ \-q ]
+.PP
+.B iv
+.BR "\-d," " \-\-delete"
+.IR archivo
+.RI [ inicio\-fin ]
+.RI [ \-m
+.IR patrón ]
+.RI [ \-\-dry\-run ]
+.RI [ \-\-no\-backup ]
+.PP
+.B iv
+.BR "\-r," " \-\-replace"
+.IR archivo
+.RI [ inicio\-fin ]
+.IR "texto"
+.RI [ \-m
+.IR patrón ]
+.RI [ \-q ]
+.RI [ \-\-dry\-run ]
+.RI [ \-\-no\-backup ]
+.PP
+.B iv
+.B \-s
+.IR archivo
+.IR patrón
+.IR reemplazo
+.RI [ \-e
+.IR patrón
+.IR reemplazo ]
+.RI [ \-m
+.IR patrón ]
+.RI [ \-F
+.IR delim
+.IR N
+.IR valor ]
+.RI [ \-E ]
+.RI [ \-g ]
+.RI [ \-q ]
+.RI [ \-\-dry\-run ]
+.RI [ \-\-no\-backup ]
+.PP
+.B iv
+.BR "\-h," " \-\-help"
+.PP
+.B iv
+.BR "\-V," " \-\-version"
+.SH DESCRIPCIÓN
+.B iv
+es un editor de texto orientado a líneas para la línea de comandos, inspirado
+en ed/sed. Diseñado para composición con tuberías y scripts. Sin dependencias
+externas.
+.PP
+Los argumentos de texto admiten tres formas:
+.RS
+.IP \(bu 2
+.B \-
+lee desde stdin
+.IP \(bu 2
+ruta a un archivo existente
+lee el contenido del archivo
+.IP \(bu 2
+cualquier otro texto
+se usa como literal
+.RE
+.SH COMANDOS DE VISUALIZACIÓN
+.TP
+.B \-v
+Muestra el archivo completo con números de línea.
+.TP
+.B \-va
+Muestra un rango de líneas. Orden: \fB\-va\fR \fIinicio\-fin\fR \fIarchivo\fR.
+.TP
+.B \-wc
+Cuenta líneas.
+.TP
+.B \-n
+Imprime los números de línea donde aparece \fIpatrón\fR.
+.B \-\-json
+emite {"lines":[1,5,7]} para integración con jq/Python.
+.TP
+.B \-nv
+Imprime las líneas que coinciden con \fIpatrón\fR.
+Por defecto incluye números de línea; use \fB\-\-no\-numbers\fR para solo el contenido.
+.TP
+.B \-u
+Deshace: restaura el archivo desde el slot de backup
+.IR N
+(por defecto 1). Hasta 10 backups numerados por archivo.
+.TP
+.B \-diff
+Compara el backup
+.IR N
+(por defecto 1) con el archivo actual. Con
+.B \-u
+usa formato diff unificado.
+.TP
+.B \-l
+Lista backups (solo ruta y tamaño). \fIarchivo\fR opcional filtra por nombre.
+Por defecto lista repositorio efímero y persistido.
+Con \fB\-\-persist\fR lista solo el repositorio persistido.
+.TP
+.B \-lsbak
+Lista backups con metadatos (fecha y usuario). Con \fIN\fR muestra contenido del slot.
+Con \fB\-\-persist\fR opera solo sobre backups persistidos.
+.TP
+.B \-z
+.B \-rmbak
+Elimina backups. \fIarchivo\fR opcional limita al archivo indicado.
+.SH COMANDOS DE EDICIÓN
+.TP
+.B \-i
+.B \-\-insert
+Inserta texto. Sin rango, añade al final.
+.TP
+.B \-a
+Añade texto al final del archivo.
+.TP
+.B \-p
+Parchea uno o más archivos. Rango opcional para modo reemplazo.
+.TP
+.B \-pi
+Inserción por parche: inserta una línea \fIantes\fR de la indicada sin reemplazarla.
+.TP
+.B \-d
+.B \-\-delete
+Elimina líneas. Con
+.B \-m
+\fIpatrón\fR, solo las líneas coincidentes.
+.TP
+.B \-r
+.B \-\-replace
+Reemplaza líneas. Con
+.B \-m
+\fIpatrón\fR, solo las coincidentes.
+.TP
+.B \-s
+Buscar y reemplazar.
+.B \-e
+añade más reemplazos (como sed \-e).
+.B \-F
+\fIdelim\fR \fIN\fR \fIvalor\fR reemplaza el campo N en CSV/TSV.
+.B \-E
+habilita regex. \fB\-g\fR reemplaza todas las coincidencias por línea.
+.SH OPCIONES
+.TP
+.B \-\-dry\-run
+Muestra qué se haría sin modificar archivos.
+.TP
+.B \-\-no\-backup
+No crea backup antes de editar.
+.TP
+.B \-\-no\-numbers
+Omite números de línea en salida \-v y \-va.
+.TP
+.B \-q
+Suprime salida tipo tee en \-i, \-a, \-r, \-p.
+.TP
+.B \-\-stdout
+Escribe el resultado a stdout sin modificar el archivo.
+.SH RANGOS
+Base 1. Ejemplos:
+.RS
+.IP \fB1\-5\fR 8
+líneas 1 a 5
+.IP \fB5\fR 8
+solo línea 5
+.IP \fB\-3\fR 8
+tercera línea desde el final
+.IP \fB\-3\-\-1\fR 8
+últimas tres líneas
+.IP \fB\-5\-\fR 8
+últimas cinco líneas
+.IP \fB2\-\fR 8
+desde la línea 2 hasta el final
+.RE
+.SH SECUENCIAS DE ESCAPE
+En texto de inserción/reemplazo: \fB\\n\fR nueva línea, \fB\\t\fR tabulador,
+\fB\\\\\fR barra invertida, \fB\\r\fR retorno de carro.
+.SH ENTORNO
+.TP
+.B IV_BACKUP_DIR
+Directorio raíz de backups efímeros. Por defecto: \fI/tmp/iv_<usuario>\fR.
+.PP
+Los backups se guardan por archivo bajo un subdirectorio derivado del repositorio
+y la ruta del archivo. Cada slot es \fIN.bak\fR con \fIN.meta\fR opcional.
+.SH ESTADO DE SALIDA
+.TP
+.B 0
+Éxito
+.TP
+.B 1
+Error (archivo binario, rango inválido, uso incorrecto)
+.SH AUTOR
+Iván Ezequiel Rodriguez
+.SH VÉASE TAMBIÉN
+.BR ed (1),
+.BR sed (1),
+.BR diff (1)
