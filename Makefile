@@ -10,7 +10,7 @@ CC ?= gcc
 CFLAGS ?= -Wall -Wextra -O2 -D_POSIX_C_SOURCE=200809L
 LDFLAGS ?=
 
-SRCS = main.c view.c edit.c range.c
+SRCS = main.c view.c edit.c range.c write.c
 OBJS = $(SRCS:.c=.o)
 TARGET = iv
 
@@ -43,6 +43,7 @@ uninstall:
 
 test: $(TARGET)
 	@./tests/smoke.sh "$(CURDIR)/$(TARGET)"
+	@./tests/safety.sh "$(CURDIR)/$(TARGET)"
 	@./tests/completions.sh
 
 clean:

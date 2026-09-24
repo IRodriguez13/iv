@@ -1,4 +1,4 @@
-.TH IV 1 "September 2026" "iv 0.10.5" "User Commands"
+.TH IV 1 "September 2026" "iv 0.11.0" "User Commands"
 .SH NAME
 iv \- line-oriented text editor for scripts and pipes
 .SH SYNOPSIS
@@ -242,9 +242,12 @@ adds more replacements (like sed \-e).
 .B \-m
 \fIpattern\fR restricts to lines containing pattern.
 .B \-F
-\fIdelim\fR \fIN\fR \fIvalue\fR replaces field N in CSV/TSV.
+\fIdelim\fR \fIN\fR \fIvalue\fR replaces field N (delimiter-separated text, not CSV quoting).
 .B \-E
-enables regex. \fB\-g\fR replaces all matches per line.
+enables POSIX ERE. Replacement supports \fB\\1\fR–\fB\\9\fR and \fB&\fR.
+\fB\-g\fR replaces all matches per line.
+.B \-m
+uses the same language as the substitute (literal, or ERE with \fB\-E\fR).
 .SH OPTIONS
 .TP
 .B \-\-dry\-run
@@ -292,13 +295,19 @@ Each backup slot is stored as \fIN.bak\fR (e.g. \fI1.bak\fR, \fI2.bak\fR, ...), 
 Use \fB\-\-persist\fR with backup listing/removal commands to operate on the persisted backup repository.
 .PP
 The single-dash aliases \fB\-persistence\fR and \fB\-unpersist\fR are accepted as equivalents of \fB\-\-persist\fR and \fB\-\-unpersist\fR.
+.SH FILE WRITES
+In-place edits write a temporary file in the same directory, \fBfsync\fR it, then \fBrename\fR(2).
+A failed edit leaves the original path unchanged.
+Symbolic links: the referent is replaced; the symlink inode is kept.
+Hard links: this pathname gets a new inode; other names keep the old bytes.
+Mode and owner are copied; xattrs and ACLs are not.
 .SH EXIT STATUS
 .TP
 .B 0
 Success
 .TP
 .B 1
-Error (binary file, invalid range, usage error)
+Error (binary file, invalid range, write failure, usage error)
 .SH AUTHOR
 Iván Ezequiel Rodriguez
 .SH SEE ALSO

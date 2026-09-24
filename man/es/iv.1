@@ -1,4 +1,4 @@
-.TH IV 1 "Septiembre 2026" "iv 0.10.5" "Comandos de usuario"
+.TH IV 1 "Septiembre 2026" "iv 0.11.0" "Comandos de usuario"
 .SH NOMBRE
 iv \- editor de texto orientado a líneas para scripts y tuberías
 .SH SINOPSIS
@@ -234,9 +234,12 @@ Buscar y reemplazar.
 .B \-e
 añade más reemplazos (como sed \-e).
 .B \-F
-\fIdelim\fR \fIN\fR \fIvalor\fR reemplaza el campo N en CSV/TSV.
+\fIdelim\fR \fIN\fR \fIvalor\fR reemplaza el campo N (texto delimitado, no CSV con comillas).
 .B \-E
-habilita regex. \fB\-g\fR reemplaza todas las coincidencias por línea.
+habilita ERE POSIX. El reemplazo admite \fB\\1\fR–\fB\\9\fR y \fB&\fR.
+\fB\-g\fR reemplaza todas las coincidencias por línea.
+.B \-m
+usa el mismo lenguaje que la sustitución (literal, o ERE con \fB\-E\fR).
 .SH OPCIONES
 .TP
 .B \-\-dry\-run
@@ -279,13 +282,19 @@ Directorio raíz de backups efímeros. Por defecto: \fI/tmp/iv_<usuario>\fR.
 .PP
 Los backups se guardan por archivo bajo un subdirectorio derivado del repositorio
 y la ruta del archivo. Cada slot es \fIN.bak\fR con \fIN.meta\fR opcional.
+.SH ESCRITURA DE ARCHIVOS
+Las ediciones in-place escriben un temporal en el mismo directorio, hacen \fBfsync\fR y luego \fBrename\fR(2).
+Si fallan, la ruta original no cambia.
+Enlaces simbólicos: se reemplaza el referente; el inode del enlace se conserva.
+Enlaces duros: este pathname recibe un inode nuevo; los demás nombres conservan los bytes viejos.
+Se copian modo y owner; no se preservan xattrs ni ACL.
 .SH ESTADO DE SALIDA
 .TP
 .B 0
 Éxito
 .TP
 .B 1
-Error (archivo binario, rango inválido, uso incorrecto)
+Error (archivo binario, rango inválido, fallo de escritura, uso incorrecto)
 .SH AUTOR
 Iván Ezequiel Rodriguez
 .SH VÉASE TAMBIÉN

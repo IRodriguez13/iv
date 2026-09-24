@@ -48,27 +48,6 @@ static int mkdir_p(const char *path)
     return 0;
 }
 
-/* Copy a file src → dst. Returns 0 on success. */
-static int copy_file(const char *src, const char *dst)
-{
-    FILE *fsrc = fopen(src, "rb");
-    if (!fsrc)
-        return -1;
-    FILE *fdst = fopen(dst, "wb");
-    if (!fdst)
-    {
-        fclose(fsrc);
-        return -1;
-    }
-    char buf[8192];
-    size_t n;
-    while ((n = fread(buf, 1, sizeof(buf), fsrc)) > 0)
-        fwrite(buf, 1, n, fdst);
-    fclose(fsrc);
-    fclose(fdst);
-    return 0;
-}
-
 /* Move src → dst, trying rename first (same filesystem),
  * then copy+unlink if crossing filesystems. */
 static int move_file(const char *src, const char *dst)
@@ -77,7 +56,7 @@ static int move_file(const char *src, const char *dst)
         return 0;
     if (errno != EXDEV)
         return -1;
-    if (copy_file(src, dst) != 0)
+    if (iv_copy_file(src, dst) != 0)
         return -1;
     return unlink(src);
 }
@@ -364,50 +343,53 @@ static int count_backup_slots(const char *filename, int persisted)
     return n - 1;
 }
 
-void backup_file(const char *filename, int persisted)
+int backup_file(const char *filename, int persisted)
 {
-    int slots = count_backup_slots(filename, persisted);
-
-    /* Rotate all existing slots upward (no fixed limit) */
+    struct stat st;
+    int slots;
     char src[PATH_MAX], dst[PATH_MAX];
+    FILE *meta;
+
+    if (stat(filename, &st) != 0)
+        return (errno == ENOENT) ? 0 : -1;
+
+    slots = count_backup_slots(filename, persisted);
+    for (int k = slots; k >= IV_BACKUP_SLOTS; k--)
+    {
+        get_backup_path_n(filename, persisted, k, src, sizeof(src));
+        unlink(src);
+        get_backup_meta_path(filename, persisted, k, src, sizeof(src));
+        unlink(src);
+    }
+    if (slots >= IV_BACKUP_SLOTS)
+        slots = IV_BACKUP_SLOTS - 1;
+
     for (int k = slots; k >= 1; k--)
     {
         get_backup_path_n(filename, persisted, k, src, sizeof(src));
         get_backup_path_n(filename, persisted, k + 1, dst, sizeof(dst));
-        rename(src, dst);
+        if (rename(src, dst) != 0 && errno != ENOENT)
+            return -1;
 
         get_backup_meta_path(filename, persisted, k, src, sizeof(src));
         get_backup_meta_path(filename, persisted, k + 1, dst, sizeof(dst));
-        rename(src, dst);
+        if (rename(src, dst) != 0 && errno != ENOENT)
+            return -1;
     }
 
-    /* Write slot 1 */
     get_backup_path_n(filename, persisted, 1, dst, sizeof(dst));
-    FILE *fsrc = fopen(filename, "r");
-    if (!fsrc)
-        return;
-    FILE *fdst = fopen(dst, "w");
-    if (!fdst)
-    {
-        fclose(fsrc);
-        return;
-    }
-    char *line = NULL;
-    size_t cap = 0;
-    while (getline(&line, &cap, fsrc) != -1)
-        fputs(line, fdst);
-    free(line);
-    fclose(fsrc);
-    fclose(fdst);
+    if (iv_copy_file(filename, dst) != 0)
+        return -1;
 
-    /* Write metadata */
     get_backup_meta_path(filename, persisted, 1, dst, sizeof(dst));
-    FILE *meta = fopen(dst, "w");
+    meta = fopen(dst, "w");
     if (meta)
     {
         fprintf(meta, "%ld %s\n", (long)time(NULL), get_username());
-        fclose(meta);
+        if (fclose(meta) != 0)
+            return -1;
     }
+    return 0;
 }
 
 /* ── persist / unpersist ────────────────────────────────────────────────── */
@@ -512,112 +494,148 @@ void write_with_escapes(FILE *f, const char *text)
 
 /* ── apply_patch ────────────────────────────────────────────────────────── */
 
+struct PatchCtx
+{
+    char **lines;
+    int count;
+    int start;
+    int end;
+    const char *new_text;
+    int mode;
+};
+
+static int emit_patch(FILE *f, const struct PatchCtx *p, int *wrote_new)
+{
+    int i;
+
+    *wrote_new = 0;
+    if (p->mode == 4)
+    {
+        for (i = 0; i < p->count; i++)
+        {
+            if (i + 1 == p->start)
+            {
+                write_with_escapes(f, p->new_text);
+                *wrote_new = 1;
+            }
+            if (fputs(p->lines[i], f) == EOF)
+                return -1;
+        }
+        if (p->start > p->count || p->count == 0)
+        {
+            write_with_escapes(f, p->new_text);
+            *wrote_new = 1;
+        }
+        return 0;
+    }
+
+    for (i = 0; i < p->count; i++)
+    {
+        if (i + 1 >= p->start && i + 1 <= p->end)
+        {
+            if (p->mode == 2)
+                continue;
+            if (p->mode == 3)
+            {
+                write_with_escapes(f, p->new_text);
+                *wrote_new = 1;
+            }
+            else if (p->mode == 1)
+            {
+                write_with_escapes(f, p->new_text);
+                if (fputs(p->lines[i], f) == EOF)
+                    return -1;
+                *wrote_new = 1;
+            }
+        }
+        else if (fputs(p->lines[i], f) == EOF)
+            return -1;
+    }
+
+    if ((p->mode == 1 || p->mode == 3) && (p->start > p->count || p->count == 0))
+    {
+        write_with_escapes(f, p->new_text);
+        *wrote_new = 1;
+    }
+    return 0;
+}
+
+static int patch_write(FILE *out, void *ctx)
+{
+    int wrote_new = 0;
+    return emit_patch(out, ctx, &wrote_new);
+}
+
 int apply_patch(const char *filename, char *lines[], int count,
                 int start, int end, const char *new_text, int mode,
                 const IvOpts *opts)
 {
+    struct PatchCtx ctx = {lines, count, start, end, new_text, mode};
     int do_backup = !opts->no_backup && !opts->to_stdout;
-    int dry = opts->dry_run;
+    int wrote_new = 0;
 
-    if (do_backup && !dry)
-        backup_file(filename, 0); /* ephemeral backups by default */
-
-    FILE *f;
-    if (dry)
-        f = NULL;
-    else if (opts->to_stdout)
-        f = stdout;
-    else
+    if (do_backup && !opts->dry_run)
     {
-        f = fopen(filename, "w");
-        if (!f)
+        if (backup_file(filename, opts->persist) != 0)
         {
-            perror("Could not write file");
+            fprintf(stderr, "iv: backup failed, aborting (original unchanged)\n");
             return -1;
         }
     }
 
-    int wrote_new = 0;
+    if (opts->dry_run)
+        return 0;
 
-    /* mode 4: patch insert — insert before start, shift the rest down */
-    if (mode == 4)
+    if (opts->to_stdout)
     {
-        for (int i = 0; i < count; i++)
+        if (emit_patch(stdout, &ctx, &wrote_new) != 0 || iv_check_stream(stdout) != 0)
         {
-            if (i + 1 == start)
-            {
-                if (f)
-                    write_with_escapes(f, new_text);
-                wrote_new = 1;
-            }
-            if (f)
-                fputs(lines[i], f);
+            fprintf(stderr, "iv: write failed\n");
+            return -1;
         }
-        if (start > count || count == 0)
-        {
-            if (f)
-                write_with_escapes(f, new_text);
-            wrote_new = 1;
-        }
-        if (f && f != stdout)
-            fclose(f);
-        return wrote_new ? 0 : -1;
+        return (mode == 2 || wrote_new) ? 0 : -1;
     }
 
-    for (int i = 0; i < count; i++)
-    {
-        if (i + 1 >= start && i + 1 <= end)
-        {
-            if (mode == 2)
-                continue; /* delete */
-            if (mode == 3)
-            { /* replace */
-                if (f)
-                    write_with_escapes(f, new_text);
-                wrote_new = 1;
-            }
-            else if (mode == 1)
-            { /* insert before */
-                if (f)
-                    write_with_escapes(f, new_text);
-                if (f)
-                    fputs(lines[i], f);
-                wrote_new = 1;
-            }
-        }
-        else
-        {
-            if (f)
-                fputs(lines[i], f);
-        }
-    }
-
-    if ((mode == 1 || mode == 3) && (start > count || count == 0))
-    {
-        if (f)
-            write_with_escapes(f, new_text);
-        wrote_new = 1;
-    }
-
-    if (f && f != stdout)
-        fclose(f);
-    return wrote_new ? 0 : -1;
+    if (iv_commit_stream(filename, patch_write, &ctx) != 0)
+        return -1;
+    return 0;
 }
 
 /* ── Search / replace ───────────────────────────────────────────────────── */
+
+static int append_mem(char **out, size_t *len, size_t *cap, const char *s, size_t n)
+{
+    if (*len + n + 1 >= *cap)
+    {
+        size_t nc = *len + n + 256;
+        char *tmp = realloc(*out, nc);
+        if (!tmp)
+            return -1;
+        *out = tmp;
+        *cap = nc;
+    }
+    memcpy(*out + *len, s, n);
+    *len += n;
+    return 0;
+}
 
 static char *replace_in_string(const char *line, const char *pat,
                                const char *repl, int global, int *n)
 {
     size_t plen = strlen(pat);
     size_t rlen = strlen(repl);
-    size_t cap = strlen(line) + 256;
-    char *out = malloc(cap);
-    if (!out)
-        return NULL;
+    size_t cap;
+    char *out;
     size_t len = 0;
     const char *cur = line;
+
     *n = 0;
+    if (!pat || !*pat || !strstr(line, pat))
+        return NULL;
+    cap = strlen(line) + 256;
+    out = malloc(cap);
+    if (!out)
+        return NULL;
     while (*cur)
     {
         const char *p = strstr(cur, pat);
@@ -702,68 +720,118 @@ int search_replace(char *lines[], int count, const char *pattern,
     return total;
 }
 
+#define IV_RE_NMATCH 10
+
+static int expand_repl(char **out, size_t *len, size_t *cap, const char *repl,
+                       const char *cur, const regmatch_t *pm, size_t nmatch)
+{
+    const char *p;
+
+    for (p = repl; *p; p++)
+    {
+        if (*p == '\\' && p[1])
+        {
+            p++;
+            if (*p == '\\')
+            {
+                if (append_mem(out, len, cap, "\\", 1) != 0)
+                    return -1;
+            }
+            else if (*p == '&' || *p == '0')
+            {
+                if (pm[0].rm_so >= 0 &&
+                    append_mem(out, len, cap, cur + pm[0].rm_so,
+                               (size_t)(pm[0].rm_eo - pm[0].rm_so)) != 0)
+                    return -1;
+            }
+            else if (*p >= '1' && *p <= '9')
+            {
+                int i = *p - '0';
+                if (i < (int)nmatch && pm[i].rm_so >= 0 &&
+                    append_mem(out, len, cap, cur + pm[i].rm_so,
+                               (size_t)(pm[i].rm_eo - pm[i].rm_so)) != 0)
+                    return -1;
+            }
+            else
+            {
+                char lit[2] = {'\\', *p};
+                if (append_mem(out, len, cap, lit, 2) != 0)
+                    return -1;
+            }
+        }
+        else if (*p == '&')
+        {
+            if (pm[0].rm_so >= 0 &&
+                append_mem(out, len, cap, cur + pm[0].rm_so,
+                           (size_t)(pm[0].rm_eo - pm[0].rm_so)) != 0)
+                return -1;
+        }
+        else if (append_mem(out, len, cap, p, 1) != 0)
+            return -1;
+    }
+    return 0;
+}
+
 static char *replace_regex_in_string(const char *line, regex_t *re,
                                      const char *repl, int global, int *n)
 {
-    size_t rlen = strlen(repl);
     size_t cap = strlen(line) + 256;
     char *out = malloc(cap);
-    if (!out)
-        return NULL;
     size_t len = 0;
     const char *cur = line;
-    regmatch_t m;
+    regmatch_t pm[IV_RE_NMATCH];
+    int eflags = 0;
+
+    if (!out)
+        return NULL;
     *n = 0;
-    while (regexec(re, cur, 1, &m, 0) == 0)
+    while (regexec(re, cur, IV_RE_NMATCH, pm, eflags) == 0)
     {
-        size_t before = (size_t)m.rm_so;
-        if (len + before + rlen + 1 >= cap)
+        size_t before = (size_t)pm[0].rm_so;
+        if (append_mem(&out, &len, &cap, cur, before) != 0)
         {
-            cap = len + before + rlen + 256;
-            char *tmp = realloc(out, cap);
-            if (!tmp)
+            free(out);
+            return NULL;
+        }
+        if (expand_repl(&out, &len, &cap, repl, cur, pm, IV_RE_NMATCH) != 0)
+        {
+            free(out);
+            return NULL;
+        }
+        (*n)++;
+        if (pm[0].rm_eo == 0)
+        {
+            if (!cur[0])
+                break;
+            if (append_mem(&out, &len, &cap, cur, 1) != 0)
             {
                 free(out);
                 return NULL;
             }
-            out = tmp;
+            cur += 1;
         }
-        memcpy(out + len, cur, before);
-        len += before;
-        memcpy(out + len, repl, rlen);
-        len += rlen;
-        cur += m.rm_eo;
-        (*n)++;
+        else
+            cur += pm[0].rm_eo;
         if (!global)
         {
-            size_t rest = strlen(cur);
-            if (len + rest + 1 >= cap)
+            if (append_mem(&out, &len, &cap, cur, strlen(cur)) != 0)
             {
-                cap = len + rest + 256;
-                char *tmp = realloc(out, cap);
-                if (!tmp)
-                {
-                    free(out);
-                    return NULL;
-                }
-                out = tmp;
+                free(out);
+                return NULL;
             }
-            memcpy(out + len, cur, rest);
-            len += rest;
             break;
         }
+        eflags = (cur > line && cur[-1] != '\n') ? REG_NOTBOL : 0;
     }
     if (*n == 0)
     {
-        size_t l = strlen(line);
-        if (l + 1 > cap)
-        {
-            char *tmp = realloc(out, l + 1);
-            if (tmp)
-                out = tmp;
-        }
-        strcpy(out, line);
-        len = l;
+        free(out);
+        return NULL;
+    }
+    if (global && append_mem(&out, &len, &cap, cur, strlen(cur)) != 0)
+    {
+        free(out);
+        return NULL;
     }
     out[len] = '\0';
     return out;
@@ -795,19 +863,39 @@ int search_replace_regex(char *lines[], int count, const char *pattern,
     return total;
 }
 
+static int line_matches_filter(const char *line, const char *filter,
+                               const regex_t *fre)
+{
+    if (!filter || !*filter)
+        return 1;
+    if (fre)
+        return regexec(fre, line, 0, NULL, 0) == 0;
+    return strstr(line, filter) != NULL;
+}
+
 int search_replace_filtered(char *lines[], int count, const char *pattern,
                             const char *replacement, int global,
-                            const char *filter)
+                            const char *filter, int filter_regex)
 {
+    regex_t fre;
+    regex_t *fp = NULL;
+    int total = 0;
+
     if (!pattern || !*pattern)
         return 0;
-    int total = 0;
+    if (filter && *filter && filter_regex)
+    {
+        if (regcomp(&fre, filter, REG_EXTENDED | REG_NOSUB) != 0)
+            return -1;
+        fp = &fre;
+    }
     for (int i = 0; i < count; i++)
     {
-        if (filter && !strstr(lines[i], filter))
-            continue;
         int n;
-        char *nl = replace_in_string(lines[i], pattern, replacement, global, &n);
+        char *nl;
+        if (!line_matches_filter(lines[i], filter, fp))
+            continue;
+        nl = replace_in_string(lines[i], pattern, replacement, global, &n);
         if (nl && n > 0)
         {
             free(lines[i]);
@@ -817,25 +905,39 @@ int search_replace_filtered(char *lines[], int count, const char *pattern,
         else
             free(nl);
     }
+    if (fp)
+        regfree(fp);
     return total;
 }
 
 int search_replace_regex_filtered(char *lines[], int count, const char *pattern,
                                   const char *replacement, int global,
-                                  const char *filter)
+                                  const char *filter, int filter_regex)
 {
+    regex_t re, fre;
+    regex_t *fp = NULL;
+    int total = 0;
+
     if (!pattern || !*pattern)
         return 0;
-    regex_t re;
     if (regcomp(&re, pattern, REG_EXTENDED) != 0)
         return -1;
-    int total = 0;
+    if (filter && *filter && filter_regex)
+    {
+        if (regcomp(&fre, filter, REG_EXTENDED | REG_NOSUB) != 0)
+        {
+            regfree(&re);
+            return -1;
+        }
+        fp = &fre;
+    }
     for (int i = 0; i < count; i++)
     {
-        if (filter && !strstr(lines[i], filter))
-            continue;
         int n;
-        char *nl = replace_regex_in_string(lines[i], &re, replacement, global, &n);
+        char *nl;
+        if (!line_matches_filter(lines[i], filter, fp))
+            continue;
+        nl = replace_regex_in_string(lines[i], &re, replacement, global, &n);
         if (nl && n > 0)
         {
             free(lines[i]);
@@ -845,6 +947,8 @@ int search_replace_regex_filtered(char *lines[], int count, const char *pattern,
         else
             free(nl);
     }
+    if (fp)
+        regfree(fp);
     regfree(&re);
     return total;
 }
@@ -902,25 +1006,514 @@ int replace_field(char *lines[], int count, char delim, int field_num,
     return count;
 }
 
-/* ── Write lines ────────────────────────────────────────────────────────── */
-
-void write_lines_to_file(const char *filename, char *lines[], int count)
+int iv_stream_subst(FILE *in, FILE *out, const char *(*pairs)[2],
+                    int npairs, const IvOpts *opts, int *nrepl)
 {
-    FILE *f = fopen(filename, "w");
-    if (!f)
+    char *line = NULL;
+    size_t cap = 0;
+    regex_t *res = NULL;
+    regex_t fre;
+    regex_t *fp = NULL;
+    int total = 0;
+    int i;
+    ssize_t nread;
+
+    if (nrepl)
+        *nrepl = 0;
+    if (opts->use_regex)
     {
-        perror("Could not write file");
-        return;
+        res = calloc((size_t)npairs, sizeof(*res));
+        if (!res)
+            return -1;
+        for (i = 0; i < npairs; i++)
+        {
+            if (regcomp(&res[i], pairs[i][0], REG_EXTENDED) != 0)
+            {
+                while (--i >= 0)
+                    regfree(&res[i]);
+                free(res);
+                return -1;
+            }
+        }
     }
-    for (int i = 0; i < count; i++)
-        fputs(lines[i], f);
-    fclose(f);
+    if (opts->multimatch && opts->use_regex)
+    {
+        if (regcomp(&fre, opts->multimatch, REG_EXTENDED | REG_NOSUB) != 0)
+        {
+            if (res)
+            {
+                for (i = 0; i < npairs; i++)
+                    regfree(&res[i]);
+                free(res);
+            }
+            return -1;
+        }
+        fp = &fre;
+    }
+
+    while ((nread = getline(&line, &cap, in)) != -1)
+    {
+        char *cur = line;
+        int owned = 0;
+
+        if (memchr(line, 0, (size_t)nread))
+        {
+            free(line);
+            if (res)
+            {
+                for (i = 0; i < npairs; i++)
+                    regfree(&res[i]);
+                free(res);
+            }
+            if (fp)
+                regfree(fp);
+            fprintf(stderr, "iv: refusing to edit binary file\n");
+            return -1;
+        }
+
+        if (line_matches_filter(cur, opts->multimatch, fp))
+        {
+            for (i = 0; i < npairs; i++)
+            {
+                int n = 0;
+                char *nl = opts->use_regex
+                               ? replace_regex_in_string(cur, &res[i], pairs[i][1],
+                                                         opts->global_replace, &n)
+                               : replace_in_string(cur, pairs[i][0], pairs[i][1],
+                                                   opts->global_replace, &n);
+                if (nl && n > 0)
+                {
+                    if (owned)
+                        free(cur);
+                    cur = nl;
+                    owned = 1;
+                    total += n;
+                }
+                else
+                    free(nl);
+            }
+        }
+        if (fputs(cur, out) == EOF)
+        {
+            if (owned)
+                free(cur);
+            free(line);
+            if (res)
+            {
+                for (i = 0; i < npairs; i++)
+                    regfree(&res[i]);
+                free(res);
+            }
+            if (fp)
+                regfree(fp);
+            return -1;
+        }
+        if (owned)
+            free(cur);
+    }
+    free(line);
+    if (res)
+    {
+        for (i = 0; i < npairs; i++)
+            regfree(&res[i]);
+        free(res);
+    }
+    if (fp)
+        regfree(fp);
+    if (ferror(in))
+        return -1;
+    if (nrepl)
+        *nrepl = total;
+    return 0;
 }
 
-void write_lines_to_stream(FILE *f, char *lines[], int count)
+int iv_stream_fields(FILE *in, FILE *out, char delim, int field_num,
+                     const char *value)
 {
-    for (int i = 0; i < count; i++)
-        fputs(lines[i], f);
+    char *line = NULL;
+    size_t cap = 0;
+    ssize_t nread;
+
+    while ((nread = getline(&line, &cap, in)) != -1)
+    {
+        char *nl;
+        if (memchr(line, 0, (size_t)nread))
+        {
+            free(line);
+            fprintf(stderr, "iv: refusing to edit binary file\n");
+            return -1;
+        }
+        nl = replace_field_in_line(line, delim, field_num, value);
+        if (!nl || fputs(nl, out) == EOF)
+        {
+            free(nl);
+            free(line);
+            return -1;
+        }
+        free(nl);
+    }
+    free(line);
+    return ferror(in) ? -1 : 0;
+}
+
+/* ── Ring buffer + streaming ranges ─────────────────────────────────────── */
+
+typedef struct
+{
+    char **v;
+    int cap;
+    int n;
+    int i;
+} LineRing;
+
+static int ring_init(LineRing *r, int cap)
+{
+    memset(r, 0, sizeof(*r));
+    if (cap < 1)
+        return 0;
+    r->v = calloc((size_t)cap, sizeof(char *));
+    if (!r->v)
+        return -1;
+    r->cap = cap;
+    return 0;
+}
+
+static void ring_free(LineRing *r)
+{
+    int k;
+
+    if (!r->v)
+        return;
+    for (k = 0; k < r->n; k++)
+        free(r->v[(r->i + k) % r->cap]);
+    free(r->v);
+    memset(r, 0, sizeof(*r));
+}
+
+static char *ring_push(LineRing *r, char *owned)
+{
+    char *evicted;
+
+    if (r->cap < 1)
+        return owned;
+    if (r->n == r->cap)
+    {
+        evicted = r->v[r->i];
+        r->v[r->i] = owned;
+        r->i = (r->i + 1) % r->cap;
+        return evicted;
+    }
+    r->v[(r->i + r->n) % r->cap] = owned;
+    r->n++;
+    return NULL;
+}
+
+static char *ring_at(const LineRing *r, int idx)
+{
+    return r->v[(r->i + idx) % r->cap];
+}
+
+static int emit_line(FILE *out, const char *line, int lineno, int numbered)
+{
+    if (numbered)
+        return (fprintf(out, "%4d | %s", lineno, line) < 0) ? -1 : 0;
+    return (fputs(line, out) == EOF) ? -1 : 0;
+}
+
+static int emit_repl(FILE *out, const char *text)
+{
+    if (!text)
+        text = "";
+    write_with_escapes(out, text);
+    return ferror(out) ? -1 : 0;
+}
+
+static int in_forward(int n, const IvRangePlan *p)
+{
+    if (n < p->start)
+        return 0;
+    if (p->end >= 0 && n > p->end)
+        return 0;
+    return 1;
+}
+
+static void tail_slice(const LineRing *r, const IvRangePlan *p,
+                       int *af, int *at)
+{
+    int virt0 = p->window - r->n;
+
+    *af = p->from - virt0;
+    *at = p->to - virt0;
+    if (*af < 0)
+        *af = 0;
+    if (*at > r->n - 1)
+        *at = r->n - 1;
+}
+
+static int flush_tail(FILE *out, const LineRing *r, const IvRangePlan *p,
+                      int op, const char *text, int no_numbers, int total)
+{
+    int af, at, k, lineno;
+
+    tail_slice(r, p, &af, &at);
+    for (k = 0; k < r->n; k++)
+    {
+        int act = (af <= at && k >= af && k <= at);
+
+        lineno = total - r->n + 1 + k;
+        if (op == IV_STREAM_VIEW)
+        {
+            if (act && emit_line(out, ring_at(r, k), lineno, !no_numbers) != 0)
+                return -1;
+        }
+        else if (op == IV_STREAM_DELETE)
+        {
+            if (!act && emit_line(out, ring_at(r, k), 0, 0) != 0)
+                return -1;
+        }
+        else if (op == IV_STREAM_REPLACE)
+        {
+            if (act)
+            {
+                if (emit_repl(out, text) != 0)
+                    return -1;
+            }
+            else if (emit_line(out, ring_at(r, k), 0, 0) != 0)
+                return -1;
+        }
+    }
+    return 0;
+}
+
+int iv_stream_by_plan(FILE *in, FILE *out, const IvRangePlan *p, int op,
+                      const char *text, int no_numbers)
+{
+    char *line = NULL;
+    size_t cap = 0;
+    ssize_t nread;
+    int n = 0;
+    LineRing ring;
+    int hold;
+
+    if (!in || !out || !p)
+        return -1;
+    hold = (p->kind == IV_RANGE_TAIL) ? p->window
+           : (p->kind == IV_RANGE_HYBRID) ? p->hold
+                                          : 0;
+    if (ring_init(&ring, hold) != 0)
+        return -1;
+
+    while ((nread = getline(&line, &cap, in)) != -1)
+    {
+        char *owned;
+        char *evicted;
+
+        n++;
+        if (memchr(line, 0, (size_t)nread))
+        {
+            free(line);
+            ring_free(&ring);
+            fprintf(stderr, "iv: refusing to edit binary file\n");
+            return -1;
+        }
+
+        if (p->kind == IV_RANGE_FORWARD)
+        {
+            int hit = in_forward(n, p);
+
+            if (op == IV_STREAM_VIEW)
+            {
+                if (p->end >= 0 && n > p->end)
+                    break;
+                if (hit && emit_line(out, line, n, !no_numbers) != 0)
+                    goto fail;
+            }
+            else if (op == IV_STREAM_DELETE)
+            {
+                if (!hit && emit_line(out, line, 0, 0) != 0)
+                    goto fail;
+            }
+            else if (hit)
+            {
+                if (emit_repl(out, text) != 0)
+                    goto fail;
+            }
+            else if (emit_line(out, line, 0, 0) != 0)
+                goto fail;
+            continue;
+        }
+
+        if (p->kind == IV_RANGE_HYBRID && n < p->start)
+        {
+            if (op == IV_STREAM_VIEW)
+                continue;
+            if (emit_line(out, line, 0, 0) != 0)
+                goto fail;
+            continue;
+        }
+
+        owned = malloc((size_t)nread + 1);
+        if (!owned)
+            goto fail;
+        memcpy(owned, line, (size_t)nread + 1);
+        evicted = ring_push(&ring, owned);
+        if (!evicted)
+            continue;
+        if (p->kind == IV_RANGE_TAIL)
+        {
+            if (op == IV_STREAM_VIEW)
+                free(evicted);
+            else if (emit_line(out, evicted, 0, 0) != 0)
+            {
+                free(evicted);
+                goto fail;
+            }
+            else
+                free(evicted);
+        }
+        else
+        {
+            /* hybrid: evicted is inside the range */
+            if (op == IV_STREAM_VIEW)
+            {
+                if (emit_line(out, evicted, n - hold, !no_numbers) != 0)
+                {
+                    free(evicted);
+                    goto fail;
+                }
+                free(evicted);
+            }
+            else if (op == IV_STREAM_DELETE)
+                free(evicted);
+            else
+            {
+                if (emit_repl(out, text) != 0)
+                {
+                    free(evicted);
+                    goto fail;
+                }
+                free(evicted);
+            }
+        }
+    }
+    free(line);
+    line = NULL;
+
+    if (p->kind == IV_RANGE_TAIL)
+    {
+        if (flush_tail(out, &ring, p, op, text, no_numbers, n) != 0)
+            goto fail;
+    }
+    else if (p->kind == IV_RANGE_HYBRID)
+    {
+        int k;
+
+        for (k = 0; k < ring.n; k++)
+        {
+            if (op == IV_STREAM_VIEW)
+                continue;
+            if (emit_line(out, ring_at(&ring, k), 0, 0) != 0)
+                goto fail;
+        }
+    }
+    ring_free(&ring);
+    return ferror(in) ? -1 : 0;
+
+fail:
+    free(line);
+    ring_free(&ring);
+    return -1;
+}
+
+int iv_stream_delete_match(FILE *in, FILE *out, const char *filter,
+                           int use_regex)
+{
+    char *line = NULL;
+    size_t cap = 0;
+    ssize_t nread;
+    regex_t re;
+    regex_t *fp = NULL;
+
+    if (filter && *filter && use_regex)
+    {
+        if (regcomp(&re, filter, REG_EXTENDED | REG_NOSUB) != 0)
+            return -1;
+        fp = &re;
+    }
+    while ((nread = getline(&line, &cap, in)) != -1)
+    {
+        if (memchr(line, 0, (size_t)nread))
+        {
+            free(line);
+            if (fp)
+                regfree(fp);
+            fprintf(stderr, "iv: refusing to edit binary file\n");
+            return -1;
+        }
+        if (line_matches_filter(line, filter, fp))
+            continue;
+        if (fputs(line, out) == EOF)
+        {
+            free(line);
+            if (fp)
+                regfree(fp);
+            return -1;
+        }
+    }
+    free(line);
+    if (fp)
+        regfree(fp);
+    return ferror(in) ? -1 : 0;
+}
+
+int iv_stream_replace_match(FILE *in, FILE *out, const char *filter,
+                            int use_regex, const char *text)
+{
+    char *line = NULL;
+    size_t cap = 0;
+    ssize_t nread;
+    regex_t re;
+    regex_t *fp = NULL;
+
+    if (filter && *filter && use_regex)
+    {
+        if (regcomp(&re, filter, REG_EXTENDED | REG_NOSUB) != 0)
+            return -1;
+        fp = &re;
+    }
+    while ((nread = getline(&line, &cap, in)) != -1)
+    {
+        if (memchr(line, 0, (size_t)nread))
+        {
+            free(line);
+            if (fp)
+                regfree(fp);
+            fprintf(stderr, "iv: refusing to edit binary file\n");
+            return -1;
+        }
+        if (line_matches_filter(line, filter, fp))
+        {
+            if (emit_repl(out, text) != 0)
+            {
+                free(line);
+                if (fp)
+                    regfree(fp);
+                return -1;
+            }
+            continue;
+        }
+        if (fputs(line, out) == EOF)
+        {
+            free(line);
+            if (fp)
+                regfree(fp);
+            return -1;
+        }
+    }
+    free(line);
+    if (fp)
+        regfree(fp);
+    return ferror(in) ? -1 : 0;
 }
 
 /* ── Metadata ───────────────────────────────────────────────────────────── */

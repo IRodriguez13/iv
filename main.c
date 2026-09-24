@@ -3,6 +3,8 @@
 
 #include "iv.h"
 #include <limits.h>
+#include <regex.h>
+#include <sys/stat.h>
 
 static void usage(const char *prog)
 {
@@ -225,7 +227,7 @@ char *read_file_content(const char *path)
     return buf;
 }
 
-static char **load_lines(FILE *f, int *out_count)
+static char **load_lines(FILE *f, int *out_count, int *has_nul)
 {
     size_t cap = INITIAL_LINES;
     char **lines = malloc(cap * sizeof(char *));
@@ -234,8 +236,13 @@ static char **load_lines(FILE *f, int *out_count)
     int count = 0;
     char *line = NULL;
     size_t linecap = 0;
-    while (getline(&line, &linecap, f) != -1)
+    ssize_t nread;
+    if (has_nul)
+        *has_nul = 0;
+    while ((nread = getline(&line, &linecap, f)) != -1)
     {
+        if (has_nul && nread > 0 && memchr(line, 0, (size_t)nread))
+            *has_nul = 1;
         if ((size_t)count >= cap)
         {
             cap *= 2;
@@ -285,6 +292,98 @@ static void free_lines(char **lines, int count)
     for (int i = 0; i < count; i++)
         free(lines[i]);
     free(lines);
+}
+
+struct SubstCommit
+{
+    const char *path;
+    const char *(*pairs)[2];
+    int npairs;
+    const IvOpts *opts;
+    int *nrepl;
+    int persisted;
+};
+
+struct FieldCommit
+{
+    const char *path;
+    char delim;
+    int field_num;
+    const char *value;
+};
+
+static int subst_commit_write(FILE *out, void *v)
+{
+    struct SubstCommit *c = v;
+    FILE *in = fopen(c->path, "r");
+    int rc;
+
+    if (!in)
+        return -1;
+    rc = iv_stream_subst(in, out, c->pairs, c->npairs, c->opts, c->nrepl);
+    fclose(in);
+    if (rc != 0)
+        return -1;
+    if (c->nrepl && *c->nrepl == 0)
+        return 1;
+    if (!c->opts->no_backup && backup_file(c->path, c->persisted) != 0)
+    {
+        fprintf(stderr, "iv: backup failed, aborting (original unchanged)\n");
+        return -1;
+    }
+    return 0;
+}
+
+static int field_commit_write(FILE *out, void *v)
+{
+    struct FieldCommit *c = v;
+    FILE *in = fopen(c->path, "r");
+    int rc;
+
+    if (!in)
+        return -1;
+    rc = iv_stream_fields(in, out, c->delim, c->field_num, c->value);
+    fclose(in);
+    return rc;
+}
+
+struct PlanCommit
+{
+    const char *path;
+    IvRangePlan plan;
+    int op;
+    const char *text;
+    const char *filter;
+    int use_regex;
+    int persisted;
+    int no_backup;
+};
+
+static int plan_commit_write(FILE *out, void *v)
+{
+    struct PlanCommit *c = v;
+    FILE *in = fopen(c->path, "r");
+    int rc;
+
+    if (!in)
+        return -1;
+    if (c->filter)
+    {
+        rc = (c->op == IV_STREAM_REPLACE)
+                 ? iv_stream_replace_match(in, out, c->filter, c->use_regex, c->text)
+                 : iv_stream_delete_match(in, out, c->filter, c->use_regex);
+    }
+    else
+        rc = iv_stream_by_plan(in, out, &c->plan, c->op, c->text, 1);
+    fclose(in);
+    if (rc != 0)
+        return -1;
+    if (!c->no_backup && backup_file(c->path, c->persisted) != 0)
+    {
+        fprintf(stderr, "iv: backup failed, aborting (original unchanged)\n");
+        return -1;
+    }
+    return 0;
 }
 
 int main(int argc, char *argv[])
@@ -503,26 +602,335 @@ int main(int argc, char *argv[])
         }
         char bakname[PATH_MAX];
         get_backup_path_n(filename, persisted, slot, bakname, sizeof(bakname));
-        FILE *src = fopen(bakname, "r");
-        if (!src)
         {
-            fprintf(stderr, "iv: no backup %d found (%s)\n", slot, bakname);
+            struct stat st;
+            if (stat(bakname, &st) != 0)
+            {
+                fprintf(stderr, "iv: no backup %d found (%s)\n", slot, bakname);
+                return 1;
+            }
+        }
+        if (iv_restore_file(bakname, filename) != 0)
+        {
+            fprintf(stderr, "iv: undo failed (original unchanged)\n");
             return 1;
         }
-        FILE *dst = fopen(filename, "w");
-        if (!dst)
-        {
-            fclose(src);
-            perror(filename);
-            return 1;
-        }
-        char buf[8192];
-        size_t n;
-        while ((n = fread(buf, 1, sizeof(buf), src)) > 0)
-            fwrite(buf, 1, n, dst);
-        fclose(src);
-        fclose(dst);
         return 0;
+    }
+
+    if (strcmp(filename, "-") == 0)
+        opts.to_stdout = 1;
+
+    /* ── Streamable views and substitute (O(line) memory) ── */
+    if (strcmp(flag, "-v") == 0 || strcmp(flag, "-va") == 0 ||
+        strcmp(flag, "-wc") == 0 || strcmp(flag, "-n") == 0 ||
+        strcmp(flag, "-nv") == 0 || strcmp(flag, "-s") == 0 ||
+        strcmp(flag, "-d") == 0 || strcmp(flag, "-delete") == 0 ||
+        strcmp(flag, "-r") == 0 || strcmp(flag, "-replace") == 0)
+    {
+        FILE *src;
+        int rc = 0;
+
+        if (strcmp(filename, "-") == 0)
+            src = stdin;
+        else
+        {
+            src = fopen(filename, "r");
+            if (!src)
+            {
+                perror(filename);
+                return 1;
+            }
+        }
+
+        if (strcmp(flag, "-v") == 0)
+        {
+            rc = stream_show_file(src, opts.no_numbers);
+        }
+        else if (strcmp(flag, "-va") == 0)
+        {
+            int ri = next_arg(argc, argv, 2);
+            IvRangePlan plan;
+
+            if (ri < 0)
+            {
+                fprintf(stderr, "Missing range\n");
+                if (src != stdin)
+                    fclose(src);
+                return 1;
+            }
+            if (plan_range(argv[ri], &plan) != 0)
+            {
+                fprintf(stderr, "Invalid range\n");
+                if (src != stdin)
+                    fclose(src);
+                return 1;
+            }
+            rc = iv_stream_by_plan(src, stdout, &plan, IV_STREAM_VIEW, NULL,
+                                   opts.no_numbers);
+        }
+        else if (strcmp(flag, "-wc") == 0)
+        {
+            rc = stream_wc(src);
+        }
+        else if (strcmp(flag, "-n") == 0)
+        {
+            int a = next_arg(argc, argv, 3);
+            if (a < 0)
+            {
+                fprintf(stderr, "Usage: -n file pattern [--json]\n");
+                if (src != stdin)
+                    fclose(src);
+                return 1;
+            }
+            rc = stream_find_line_numbers(src, argv[a], opts.json, opts.use_regex);
+        }
+        else if (strcmp(flag, "-nv") == 0)
+        {
+            int a = next_arg(argc, argv, 3);
+            if (a < 0)
+            {
+                fprintf(stderr, "Usage: -nv file pattern [--no-numbers]\n");
+                if (src != stdin)
+                    fclose(src);
+                return 1;
+            }
+            rc = stream_find_matching_lines(src, argv[a], opts.no_numbers,
+                                           opts.use_regex);
+        }
+        else if (strcmp(flag, "-d") == 0 || strcmp(flag, "-delete") == 0 ||
+                 strcmp(flag, "-r") == 0 || strcmp(flag, "-replace") == 0)
+        {
+            int is_repl = (strcmp(flag, "-r") == 0 ||
+                           strcmp(flag, "-replace") == 0);
+            struct PlanCommit job;
+            char *new_text = NULL;
+            FILE *out;
+
+            memset(&job, 0, sizeof(job));
+            job.path = filename;
+            job.persisted = persisted;
+            job.no_backup = opts.no_backup;
+            job.use_regex = opts.use_regex;
+            job.filter = opts.multimatch;
+            job.op = is_repl ? IV_STREAM_REPLACE : IV_STREAM_DELETE;
+            job.plan.kind = IV_RANGE_FORWARD;
+            job.plan.start = is_repl ? 1 : 1;
+            job.plan.end = is_repl ? 1 : -1;
+
+            if (is_repl)
+            {
+                int a = next_arg(argc, argv, 3);
+                int b = (a >= 0) ? next_arg(argc, argv, a + 1) : -1;
+
+                if (a < 0)
+                    new_text = strdup("");
+                else if (b < 0)
+                    new_text = resolve_text(argv[a]);
+                else
+                {
+                    if (!opts.multimatch && plan_range(argv[a], &job.plan) != 0)
+                    {
+                        fprintf(stderr, "Invalid range\n");
+                        if (src != stdin)
+                            fclose(src);
+                        return 1;
+                    }
+                    new_text = resolve_text(argv[b]);
+                }
+                if (!new_text)
+                    new_text = strdup("");
+                job.text = new_text;
+            }
+            else if (!opts.multimatch)
+            {
+                int a = next_arg(argc, argv, 3);
+
+                if (a >= 0 && plan_range(argv[a], &job.plan) != 0)
+                {
+                    fprintf(stderr, "Invalid range\n");
+                    if (src != stdin)
+                        fclose(src);
+                    return 1;
+                }
+            }
+
+            if (opts.dry_run || opts.to_stdout)
+            {
+                out = opts.dry_run ? fopen("/dev/null", "w") : stdout;
+                if (!out)
+                {
+                    perror("/dev/null");
+                    free(new_text);
+                    if (src != stdin)
+                        fclose(src);
+                    return 1;
+                }
+                if (job.filter)
+                    rc = is_repl
+                             ? iv_stream_replace_match(src, out, job.filter,
+                                                       opts.use_regex, job.text)
+                             : iv_stream_delete_match(src, out, job.filter,
+                                                      opts.use_regex);
+                else
+                    rc = iv_stream_by_plan(src, out, &job.plan, job.op,
+                                           job.text, 1);
+                if (!opts.dry_run && iv_check_stream(out) != 0)
+                    rc = -1;
+                if (opts.dry_run)
+                    fclose(out);
+            }
+            else
+            {
+                fclose(src);
+                src = NULL;
+                rc = iv_commit_stream(filename, plan_commit_write, &job);
+            }
+            if (is_repl && rc == 0 && !opts.dry_run && !opts.quiet)
+            {
+                printf("%s", new_text);
+                if (new_text[0] && new_text[strlen(new_text) - 1] != '\n')
+                    putchar('\n');
+            }
+            free(new_text);
+            if (src && src != stdin)
+                fclose(src);
+            return rc == 0 ? 0 : 1;
+        }
+        else /* -s */
+        {
+            struct
+            {
+                const char *path;
+                const char *pairs[16][2];
+                int npairs;
+                const IvOpts *opts;
+                int nrepl;
+                int fields;
+                char delim;
+                int field_num;
+                const char *field_val;
+                char *val_owned;
+            } job;
+            memset(&job, 0, sizeof(job));
+            job.path = filename;
+            job.opts = &opts;
+
+            if (opts.field_delim && opts.field_num > 0)
+            {
+                int vi = -1;
+                for (int i = 2; i < argc - 1; i++)
+                    if (strcmp(argv[i], "-F") == 0 && i + 3 < argc)
+                    {
+                        vi = i + 3;
+                        break;
+                    }
+                if (vi < 0)
+                {
+                    fprintf(stderr, "Usage: -s file -F delim N value\n");
+                    if (src != stdin)
+                        fclose(src);
+                    return 1;
+                }
+                job.fields = 1;
+                job.delim = opts.field_delim;
+                job.field_num = opts.field_num;
+                job.val_owned = resolve_text(argv[vi]);
+                job.field_val = job.val_owned ? job.val_owned : "";
+            }
+            else
+            {
+                int a = next_arg(argc, argv, 3);
+                int b = (a >= 0) ? next_arg(argc, argv, a + 1) : -1;
+                if (a < 0 || b < 0)
+                {
+                    fprintf(stderr, "Usage: -s file pattern replacement [-e ...]\n");
+                    if (src != stdin)
+                        fclose(src);
+                    return 1;
+                }
+                job.pairs[job.npairs][0] = argv[a];
+                job.pairs[job.npairs][1] = argv[b];
+                job.npairs++;
+                for (int i = 2; i < argc - 2; i++)
+                {
+                    if (strcmp(argv[i], "-e") == 0 && i + 2 < argc)
+                    {
+                        if (job.npairs >= 16)
+                        {
+                            fprintf(stderr, "iv: too many -e pairs (max 16)\n");
+                            if (src != stdin)
+                                fclose(src);
+                            return 1;
+                        }
+                        job.pairs[job.npairs][0] = argv[i + 1];
+                        job.pairs[job.npairs][1] = argv[i + 2];
+                        job.npairs++;
+                    }
+                }
+            }
+
+            if (opts.dry_run || opts.to_stdout)
+            {
+                FILE *out = opts.dry_run ? fopen("/dev/null", "w") : stdout;
+                if (!out)
+                {
+                    perror("/dev/null");
+                    if (src != stdin)
+                        fclose(src);
+                    free(job.val_owned);
+                    return 1;
+                }
+                if (job.fields)
+                    rc = iv_stream_fields(src, out, job.delim, job.field_num,
+                                          job.field_val);
+                else
+                    rc = iv_stream_subst(src, out, job.pairs, job.npairs, &opts,
+                                         &job.nrepl);
+                if (!opts.dry_run && iv_check_stream(out) != 0)
+                    rc = -1;
+                if (opts.dry_run)
+                    fclose(out);
+            }
+            else
+            {
+                fclose(src);
+                src = NULL;
+                if (job.fields)
+                {
+                    struct FieldCommit fc = {filename, job.delim, job.field_num,
+                                             job.field_val};
+                    if (!opts.no_backup && backup_file(filename, persisted) != 0)
+                    {
+                        fprintf(stderr, "iv: backup failed, aborting (original unchanged)\n");
+                        free(job.val_owned);
+                        return 1;
+                    }
+                    rc = iv_commit_stream(filename, field_commit_write, &fc);
+                    if (rc == 0)
+                        job.nrepl = 1;
+                }
+                else
+                {
+                    struct SubstCommit sc = {filename, job.pairs, job.npairs,
+                                             &opts, &job.nrepl, persisted};
+                    rc = iv_commit_stream(filename, subst_commit_write, &sc);
+                }
+            }
+
+            if (job.nrepl > 0 && !job.fields)
+                fprintf(stderr, "Replaced %d occurrence(s)\n", job.nrepl);
+            free(job.val_owned);
+            if (src && src != stdin)
+                fclose(src);
+            if (rc != 0)
+                return 1;
+            return 0;
+        }
+
+        if (src != stdin)
+            fclose(src);
+        return rc == 0 ? 0 : 1;
     }
 
     /* ── Load file into memory ── */
@@ -553,8 +961,8 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    int count = 0;
-    char **lines = load_lines(f, &count);
+    int count = 0, has_nul = 0;
+    char **lines = load_lines(f, &count, &has_nul);
     if (f != stdin)
         fclose(f);
     if (!lines)
@@ -565,73 +973,10 @@ int main(int argc, char *argv[])
 
     int ret = 0;
 
-    /* ── -v ── */
-    if (strcmp(flag, "-v") == 0)
-    {
-        show_file(lines, count, opts.no_numbers);
-        goto done;
-    }
-
-    /* ── -va ── */
-    if (strcmp(flag, "-va") == 0)
-    {
-        int ri = next_arg(argc, argv, 2);
-        if (ri < 0)
-        {
-            fprintf(stderr, "Missing range\n");
-            ret = 1;
-            goto done;
-        }
-        int start, end;
-        if (parse_range(argv[ri], count, &start, &end) < 0)
-        {
-            fprintf(stderr, "Invalid range\n");
-            ret = 1;
-            goto done;
-        }
-        show_range(lines, count, start, end, opts.no_numbers);
-        goto done;
-    }
-
-    /* ── -wc ── */
-    if (strcmp(flag, "-wc") == 0)
-    {
-        printf("%d\n", wc_lines(lines, count));
-        goto done;
-    }
-
-    /* ── -n ── */
-    if (strcmp(flag, "-n") == 0)
-    {
-        int a = next_arg(argc, argv, 3);
-        if (a < 0)
-        {
-            fprintf(stderr, "Usage: -n file pattern [--json]\n");
-            ret = 1;
-            goto done;
-        }
-        find_line_numbers(lines, count, argv[a], opts.json);
-        goto done;
-    }
-
-    /* ── -nv ── */
-    if (strcmp(flag, "-nv") == 0)
-    {
-        int a = next_arg(argc, argv, 3);
-        if (a < 0)
-        {
-            fprintf(stderr, "Usage: -nv file pattern [--no-numbers]\n");
-            ret = 1;
-            goto done;
-        }
-        find_matching_lines(lines, count, argv[a], opts.no_numbers);
-        goto done;
-    }
-
     /* ── -i / -insert ── */
     if (strcmp(flag, "-i") == 0 || strcmp(flag, "-insert") == 0)
     {
-        if (is_binary_file(filename))
+        if (has_nul)
         {
             fprintf(stderr, "iv: refusing to edit binary file\n");
             ret = 1;
@@ -661,10 +1006,12 @@ int main(int argc, char *argv[])
         }
         if (!new_text)
             new_text = strdup("");
-        if (apply_patch(filename, lines, count, start, end, new_text, 1, &opts) == 0 && !opts.dry_run && !opts.quiet)
+        if (apply_patch(filename, lines, count, start, end, new_text, 1, &opts) != 0)
+            ret = 1;
+        else if (!opts.dry_run && !opts.quiet)
         {
             printf("%s", new_text);
-            if (new_text[strlen(new_text) - 1] != '\n')
+            if (new_text[0] && new_text[strlen(new_text) - 1] != '\n')
                 putchar('\n');
         }
         free(new_text);
@@ -674,7 +1021,7 @@ int main(int argc, char *argv[])
     /* ── -a append ── */
     if (strcmp(flag, "-a") == 0)
     {
-        if (is_binary_file(filename))
+        if (has_nul)
         {
             fprintf(stderr, "iv: refusing to edit binary file\n");
             ret = 1;
@@ -684,10 +1031,12 @@ int main(int argc, char *argv[])
         char *new_text = (a >= 0) ? resolve_text(argv[a]) : strdup("");
         if (!new_text)
             new_text = strdup("");
-        if (apply_patch(filename, lines, count, count + 1, count + 1, new_text, 1, &opts) == 0 && !opts.dry_run && !opts.quiet)
+        if (apply_patch(filename, lines, count, count + 1, count + 1, new_text, 1, &opts) != 0)
+            ret = 1;
+        else if (!opts.dry_run && !opts.quiet)
         {
             printf("%s", new_text);
-            if (new_text[strlen(new_text) - 1] != '\n')
+            if (new_text[0] && new_text[strlen(new_text) - 1] != '\n')
                 putchar('\n');
         }
         free(new_text);
@@ -738,12 +1087,6 @@ int main(int argc, char *argv[])
         for (int fi = 0; fi < nfiles; fi++)
         {
             const char *fname = argv[args[fi]];
-            if (is_binary_file(fname))
-            {
-                fprintf(stderr, "iv: refusing to edit binary file %s\n", fname);
-                ret = 1;
-                continue;
-            }
             FILE *fp = fopen(fname, "r");
             if (!fp)
             {
@@ -757,12 +1100,19 @@ int main(int argc, char *argv[])
                 perror(fname);
                 continue;
             }
-            int fcount = 0;
-            char **flines = load_lines(fp, &fcount);
+            int fcount = 0, fnul = 0;
+            char **flines = load_lines(fp, &fcount, &fnul);
             fclose(fp);
             if (!flines)
             {
                 perror(fname);
+                continue;
+            }
+            if (fnul)
+            {
+                fprintf(stderr, "iv: refusing to edit binary file %s\n", fname);
+                free_lines(flines, fcount);
+                ret = 1;
                 continue;
             }
 
@@ -837,12 +1187,6 @@ int main(int argc, char *argv[])
         for (int fi = 0; fi < nfiles; fi++)
         {
             const char *fname = argv[args[fi]];
-            if (is_binary_file(fname))
-            {
-                fprintf(stderr, "iv: refusing to edit binary file %s\n", fname);
-                ret = 1;
-                continue;
-            }
             FILE *fp = fopen(fname, "r");
             if (!fp)
             {
@@ -856,12 +1200,19 @@ int main(int argc, char *argv[])
                 perror(fname);
                 continue;
             }
-            int fcount = 0;
-            char **flines = load_lines(fp, &fcount);
+            int fcount = 0, fnul = 0;
+            char **flines = load_lines(fp, &fcount, &fnul);
             fclose(fp);
             if (!flines)
             {
                 perror(fname);
+                continue;
+            }
+            if (fnul)
+            {
+                fprintf(stderr, "iv: refusing to edit binary file %s\n", fname);
+                free_lines(flines, fcount);
+                ret = 1;
                 continue;
             }
 
@@ -878,262 +1229,6 @@ int main(int argc, char *argv[])
         }
         free(new_text);
         free(args);
-        goto done;
-    }
-
-    /* ── -d / -delete ── */
-    if (strcmp(flag, "-d") == 0 || strcmp(flag, "-delete") == 0)
-    {
-        if (is_binary_file(filename))
-        {
-            fprintf(stderr, "iv: refusing to edit binary file\n");
-            ret = 1;
-            goto done;
-        }
-        int start = 1, end = count;
-        int a = next_arg(argc, argv, 3);
-        if (a >= 0 && !opts.multimatch)
-            parse_range(argv[a], count, &start, &end);
-        if (opts.multimatch)
-        {
-            int new_count = 0;
-            for (int i = 0; i < count; i++)
-            {
-                if (!strstr(lines[i], opts.multimatch))
-                {
-                    if (new_count != i)
-                        lines[new_count] = lines[i];
-                    new_count++;
-                }
-                else
-                {
-                    free(lines[i]);
-                }
-            }
-            count = new_count;
-            if (!opts.dry_run && !opts.to_stdout)
-            {
-                if (!opts.no_backup)
-                    backup_file(filename, persisted);
-                write_lines_to_file(filename, lines, count);
-            }
-            else if (opts.to_stdout)
-            {
-                write_lines_to_stream(stdout, lines, count);
-            }
-        }
-        else
-        {
-            apply_patch(filename, lines, count, start, end, "", 2, &opts);
-        }
-        goto done;
-    }
-
-    /* ── -r / -replace ── */
-    if (strcmp(flag, "-r") == 0 || strcmp(flag, "-replace") == 0)
-    {
-        if (is_binary_file(filename))
-        {
-            fprintf(stderr, "iv: refusing to edit binary file\n");
-            ret = 1;
-            goto done;
-        }
-        int start = 1, end = 1;
-        char *new_text = NULL;
-        int a = next_arg(argc, argv, 3);
-        int b = (a >= 0) ? next_arg(argc, argv, a + 1) : -1;
-        if (a < 0)
-        {
-            new_text = strdup("");
-        }
-        else if (b < 0)
-        {
-            new_text = resolve_text(argv[a]);
-        }
-        else
-        {
-            if (!opts.multimatch && parse_range(argv[a], count, &start, &end) < 0)
-            {
-                fprintf(stderr, "Invalid range\n");
-                ret = 1;
-                goto done;
-            }
-            new_text = resolve_text(argv[b]);
-        }
-        if (!new_text)
-            new_text = strdup("");
-
-        if (opts.multimatch)
-        {
-            for (int i = 0; i < count; i++)
-            {
-                if (!strstr(lines[i], opts.multimatch))
-                    continue;
-                free(lines[i]);
-                size_t n = strlen(new_text);
-                lines[i] = malloc(n + 2);
-                if (lines[i])
-                {
-                    strcpy(lines[i], new_text);
-                    if (!n || new_text[n - 1] != '\n')
-                        strcat(lines[i], "\n");
-                }
-                else
-                {
-                    lines[i] = strdup("\n");
-                }
-            }
-            if (!opts.dry_run && !opts.to_stdout)
-            {
-                if (!opts.no_backup)
-                    backup_file(filename, persisted);
-                write_lines_to_file(filename, lines, count);
-            }
-            else if (opts.to_stdout)
-            {
-                write_lines_to_stream(stdout, lines, count);
-            }
-            if (!opts.quiet)
-            {
-                printf("%s", new_text);
-                if (new_text[strlen(new_text) - 1] != '\n')
-                    putchar('\n');
-            }
-        }
-        else if (apply_patch(filename, lines, count, start, end, new_text, 3, &opts) == 0 && !opts.dry_run && !opts.quiet)
-        {
-            printf("%s", new_text);
-            if (new_text[strlen(new_text) - 1] != '\n')
-                putchar('\n');
-        }
-        free(new_text);
-        goto done;
-    }
-
-    /* ── -s search/replace ── */
-    if (strcmp(flag, "-s") == 0)
-    {
-        if (is_binary_file(filename))
-        {
-            fprintf(stderr, "iv: refusing to edit binary file\n");
-            ret = 1;
-            goto done;
-        }
-        int total = 0;
-
-        if (opts.field_delim && opts.field_num > 0)
-        {
-            /* Field mode: -s file -F delim N value */
-            int vi = -1;
-            for (int i = 2; i < argc - 1; i++)
-                if (strcmp(argv[i], "-F") == 0 && i + 3 < argc)
-                {
-                    vi = i + 3;
-                    break;
-                }
-            if (vi < 0)
-            {
-                fprintf(stderr, "Usage: -s file -F delim N value\n");
-                ret = 1;
-                goto done;
-            }
-            char *val = resolve_text(argv[vi]);
-            if (!val)
-                val = strdup("");
-            replace_field(lines, count, opts.field_delim, opts.field_num, val);
-            total = count;
-            free(val);
-        }
-        else
-        {
-            int a = next_arg(argc, argv, 3);
-            int b = (a >= 0) ? next_arg(argc, argv, a + 1) : -1;
-            if (a < 0 || b < 0)
-            {
-                fprintf(stderr, "Usage: -s file pattern replacement [-e ...]\n");
-                ret = 1;
-                goto done;
-            }
-            /* Base pair + all -e pairs */
-            int npairs = 0, pcap = 4;
-            int (*pairs)[2] = malloc(pcap * sizeof(*pairs));
-            if (!pairs)
-            {
-                ret = 1;
-                goto done;
-            }
-            pairs[npairs][0] = a;
-            pairs[npairs][1] = b;
-            npairs++;
-
-            for (int i = 2; i < argc - 2; i++)
-            {
-                if (strcmp(argv[i], "-e") == 0 && i + 2 < argc)
-                {
-                    if (npairs >= pcap)
-                    {
-                        pcap *= 2;
-                        void *tmp = realloc(pairs, pcap * sizeof(*pairs));
-                        if (!tmp)
-                        {
-                            free(pairs);
-                            ret = 1;
-                            goto done;
-                        }
-                        pairs = tmp;
-                    }
-                    pairs[npairs][0] = i + 1;
-                    pairs[npairs][1] = i + 2;
-                    npairs++;
-                }
-            }
-
-            for (int p = 0; p < npairs; p++)
-            {
-                const char *pat = argv[pairs[p][0]];
-                const char *repl = argv[pairs[p][1]];
-                int n;
-                if (opts.use_regex)
-                {
-                    n = opts.multimatch
-                            ? search_replace_regex_filtered(lines, count, pat, repl,
-                                                            opts.global_replace, opts.multimatch)
-                            : search_replace_regex(lines, count, pat, repl, opts.global_replace);
-                }
-                else
-                {
-                    n = opts.multimatch
-                            ? search_replace_filtered(lines, count, pat, repl,
-                                                      opts.global_replace, opts.multimatch)
-                            : search_replace(lines, count, pat, repl, opts.global_replace);
-                }
-                if (n < 0)
-                {
-                    fprintf(stderr, "iv: invalid regex pattern\n");
-                    free(pairs);
-                    ret = 1;
-                    goto done;
-                }
-                total += n;
-            }
-            free(pairs);
-        }
-
-        if (!opts.dry_run && total > 0)
-        {
-            if (!opts.to_stdout)
-            {
-                if (!opts.no_backup)
-                    backup_file(filename, persisted);
-                write_lines_to_file(filename, lines, count);
-            }
-            else
-            {
-                write_lines_to_stream(stdout, lines, count);
-            }
-        }
-        if (total > 0)
-            fprintf(stderr, "Replaced %d occurrence(s)\n", total);
         goto done;
     }
 

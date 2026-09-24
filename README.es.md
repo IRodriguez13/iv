@@ -48,7 +48,7 @@ autoload -Uz compinit && compinit
 | `iv -n file "pattern"` | Números de línea donde aparece el patrón |
 | `iv -n file "pattern" --json` | Salida JSON: `{"lines":[1,5,7]}` (para jq, Python, etc.) |
 | `iv -nv file "pattern"` | Muestra las líneas donde aparece el patrón (tipo grep), con número de línea |
-| `iv -u file [N]` | Deshace: restaura desde el backup N (por defecto 1); N=1..10 |
+| `iv -u file [N]` | Deshace: restaura desde el backup N (por defecto 1); slots 1..10 |
 | `iv -diff [-u] [N] file` | Compara backup N vs actual; `-u` = diff unificado |
 | `iv -l [file] [--persist]` | Lista backups: solo ruta y tamaño. Por defecto lista **efímeros + persistidos**; con `--persist` lista solo persistidos |
 | `iv -lsbak [file] [N] [--persist]` | Lista backups **con metadatos** (fecha y usuario). Por defecto lista **efímeros + persistidos**; con `--persist` lista solo persistidos. Si indicas N, muestra el contenido de ese slot |
@@ -72,9 +72,9 @@ autoload -Uz compinit && compinit
 | `iv -r file -m "pattern" "texto"` | Reemplaza solo líneas que coinciden |
 | `iv -s file patrón reemplazo` | Sustituye (literal) |
 | `iv -s file patrón reemplazo -m "filter"` | Sustituye solo en líneas que contienen "filter" |
-| `iv -s file -F ',' 2 "X"` | Sustituye campo 2 con "X" (CSV/TSV) |
+| `iv -s file -F ',' 2 "X"` | Sustituye campo 2 (texto delimitado; no es CSV con comillas) |
 | `iv -s file patrón reemplazo -e pat2 repl2` | Múltiples sustituciones (como sed -e) |
-| `iv -s file patrón reemplazo -E` | Sustituye con regex |
+| `iv -s file patrón reemplazo -E` | Sustituye con regex (`\1`–`\9`, `&`) |
 | `iv -s file patrón reemplazo -g` | Sustituye todas las ocurrencias |
 
 ### Opciones globales
@@ -165,7 +165,8 @@ iv -s file "a" "b" --stdout | iv -s - "b" "c" --stdout
 iv.h      — Declaraciones, constantes, IvOpts
 main.c    — Entrada, parseo de argumentos, dispatch
 view.c    — show_file, show_range, wc_lines, find_line_numbers, stream_file_with_numbers
-edit.c    — backup, apply_patch, search_replace, search_replace_regex, list_backups
+edit.c    — backup, apply_patch, substitute
+write.c   — commit transaccional (temp + fsync + rename)
 range.c   — parse_range
 ```
 
@@ -205,7 +206,17 @@ range.c   — parse_range
 
 ## Seguridad
 
-- **Archivos binarios**: iv rechaza editar archivos que contienen bytes nulos para evitar corrupción.
+Las ediciones in-place se confirman solo tras una escritura completa:
+
+leer → transformar → temporal en el mismo filesystem → fsync → rename
+
+Si la edición falla, la ruta original queda byte a byte igual. El backup se toma del original antes del rename.
+
+- **Archivos binarios**: iv rechaza editar archivos con bytes NUL.
+- **Symlinks**: se edita el referente; el inode del enlace se conserva.
+- **Hardlinks**: este pathname recibe un inode nuevo; los demás nombres conservan los bytes viejos.
+- **Metadatos**: se copian modo y owner del referente. No se preservan xattrs/ACL.
+- **`-`**: stdin es siempre un filtro (stdout); no crea un archivo llamado `-`.
 
 ## Códigos de salida
 
@@ -214,8 +225,11 @@ range.c   — parse_range
 
 ## Límites
 
-- Líneas: array dinámico (sin límite fijo)
-- Longitud de línea: sin límite (usa `getline` POSIX)
+- Vista / `-s` / `-F` / `-d` / `-r`: streaming. Rangos relativos al EOF (`-3--1`) usan un ring de las últimas N líneas
+- Insertar / parche: el archivo se carga en líneas
+- Slots de backup: 1..10 (se descarta el más viejo)
+- Longitud de línea: sin límite (`getline` POSIX)
+- Pares `-e`: máximo 16
 
 ## Licencia
 

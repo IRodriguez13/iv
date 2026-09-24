@@ -49,7 +49,7 @@ autoload -Uz compinit && compinit
 | `iv -n file "pattern"` | Line numbers where pattern appears |
 | `iv -n file "pattern" --json` | JSON output: `{"lines":[1,5,7]}` (for jq, Python, etc.) |
 | `iv -nv file "pattern"` | Show matching lines (grep-like), with line numbers |
-| `iv -u file [N]` | Undo: restore from backup slot N (default 1); N=1..10 |
+| `iv -u file [N]` | Undo: restore from backup slot N (default 1); slots 1..10 |
 | `iv -diff [-u] [N] file` | Compare backup N vs current; `-u` = unified diff |
 | `iv -l [file] [--persist]` | List backups (path and size). Default: **ephemeral + persisted**; with `--persist` only persisted |
 | `iv -lsbak [file] [N] [--persist]` | List backups **with metadata** (date and user). With N, show slot content |
@@ -73,9 +73,9 @@ autoload -Uz compinit && compinit
 | `iv -r file -m "pattern" "text"` | Replace only matching lines |
 | `iv -s file pattern replacement` | Substitute (literal) |
 | `iv -s file pattern replacement -m "filter"` | Substitute only on lines containing filter |
-| `iv -s file -F ',' 2 "X"` | Replace field 2 with "X" (CSV/TSV) |
+| `iv -s file -F ',' 2 "X"` | Replace field 2 (delimiter-separated; not CSV quoting) |
 | `iv -s file pat repl -e pat2 repl2` | Multiple substitutions (like sed -e) |
-| `iv -s file pattern replacement -E` | Regex substitute |
+| `iv -s file pattern replacement -E` | Regex substitute (`\1`–`\9`, `&`) |
 | `iv -s file pattern replacement -g` | Replace all matches per line |
 
 ### Global options
@@ -150,8 +150,9 @@ iv -s file "a" "b" --stdout | iv -s - "b" "c" --stdout
 ```
 iv.h      — declarations, constants, IvOpts
 main.c    — entry, argument parsing, dispatch
-view.c    — show_file, show_range, wc_lines, find_line_numbers
-edit.c    — backup, apply_patch, search_replace, list_backups
+view.c    — streaming view / search
+edit.c    — backup, apply_patch, substitute
+write.c   — transactional commit (temp + fsync + rename)
 range.c   — parse_range
 ```
 
@@ -177,7 +178,17 @@ range.c   — parse_range
 
 ## Safety
 
+In-place edits are committed only after a complete write:
+
+read → transform → temp on the same filesystem → fsync → rename
+
+A failed edit leaves the original path byte-for-byte intact. Backup is taken from the original before the rename.
+
 - **Binary files**: iv refuses to edit files containing NUL bytes.
+- **Symlinks**: the referent is edited; the symlink inode is kept.
+- **Hardlinks**: this pathname gets a new inode; other names keep the old bytes.
+- **Metadata**: mode and owner of the referent are copied. xattrs/ACLs are not.
+- **`-`**: stdin is always a filter (stdout); it never creates a file named `-`.
 
 ## Exit codes
 
@@ -186,8 +197,11 @@ range.c   — parse_range
 
 ## Limits
 
-- Lines: dynamic array (no fixed cap)
+- View / `-s` / `-F` / `-d` / `-r`: streaming. End-relative ranges (`-3--1`) keep a ring of the last N lines
+- Insert / patch: file loaded as lines
+- Backup slots: 1..10 (oldest dropped)
 - Line length: unbounded (`getline` POSIX)
+- `-e` pairs: max 16
 
 ## License
 

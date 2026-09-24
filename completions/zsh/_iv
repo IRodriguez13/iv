@@ -46,7 +46,7 @@ _iv() {
 		'--persist[Use persisted backup directory]' \
 		'--unpersist[Use ephemeral backup directory]' \
 		'-m+[Apply only to matching lines]:pattern:' \
-		'-F+[Replace CSV/TSV field N]:delimiter field value:' \
+		'-F+[Replace delimiter-separated field N]:delimiter field value:' \
 		'-e+[Extra substitute pattern]:pattern replacement:' \
 		'1:command:->cmd' \
 		'*::arg:->args'
