@@ -1,458 +1,161 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 Iván Ezequiel Rodriguez */
 
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 #include "iv.h"
 #include <stdlib.h>
 #include <dirent.h>
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <regex.h>
-#include <time.h>
 #include <unistd.h>
-#include <pwd.h>
 #include <errno.h>
 #include <limits.h>
+#include <ctype.h>
 
-/* ── Internal utilities ─────────────────────────────────────────────────── */
+/* ── GNU-style backup (Coreutils --backup / -S) ──────────────────────── */
 
-static const char *get_username(void)
+int iv_parse_backup_method(const char *s)
 {
-    const char *u = getenv("USER");
-    if (u && *u)
-        return u;
-    struct passwd *pw = getpwuid(getuid());
-    if (pw && pw->pw_name)
-        return pw->pw_name;
-    return "unknown";
-}
-
-/* Create a directory and all missing parent directories (mkdir -p). */
-static int mkdir_p(const char *path)
-{
-    char tmp[PATH_MAX];
-    snprintf(tmp, sizeof(tmp), "%s", path);
-    size_t len = strlen(tmp);
-    if (len && tmp[len - 1] == '/')
-        tmp[--len] = '\0';
-    for (char *p = tmp + 1; *p; p++)
+    static const struct
     {
-        if (*p == '/')
-        {
-            *p = '\0';
-            if (mkdir(tmp, 0755) != 0 && errno != EEXIST)
-                return -1;
-            *p = '/';
-        }
-    }
-    if (mkdir(tmp, 0755) != 0 && errno != EEXIST)
+        const char *name;
+        int type;
+    } tab[] = {
+        {"none", IV_BACKUP_NONE},
+        {"off", IV_BACKUP_NONE},
+        {"numbered", IV_BACKUP_NUMBERED},
+        {"t", IV_BACKUP_NUMBERED},
+        {"existing", IV_BACKUP_EXISTING},
+        {"nil", IV_BACKUP_EXISTING},
+        {"simple", IV_BACKUP_SIMPLE},
+        {"never", IV_BACKUP_SIMPLE},
+    };
+    size_t n;
+    int type = -1;
+    size_t i;
+
+    if (!s || !*s)
         return -1;
-    return 0;
-}
-
-/* Move src → dst, trying rename first (same filesystem),
- * then copy+unlink if crossing filesystems. */
-static int move_file(const char *src, const char *dst)
-{
-    if (rename(src, dst) == 0)
-        return 0;
-    if (errno != EXDEV)
-        return -1;
-    if (iv_copy_file(src, dst) != 0)
-        return -1;
-    return unlink(src);
-}
-
-static int join_path2(char *dst, size_t dstsz, const char *a, const char *b)
-{
-    size_t alen = a ? strlen(a) : 0;
-    size_t blen = b ? strlen(b) : 0;
-    if (alen + 1 + blen + 1 > dstsz)
-        return -1;
-    if (alen)
-        memcpy(dst, a, alen);
-    dst[alen] = '/';
-    if (blen)
-        memcpy(dst + alen + 1, b, blen);
-    dst[alen + 1 + blen] = '\0';
-    return 0;
-}
-
-static int join_path_num(char *dst, size_t dstsz, const char *a,
-                         int n, const char *suffix)
-{
-    char tail[64];
-    int w;
-    if (!suffix)
-        suffix = "";
-    w = snprintf(tail, sizeof(tail), "%d%s", n, suffix);
-    if (w < 0 || (size_t)w >= sizeof(tail))
-        return -1;
-    return join_path2(dst, dstsz, a, tail);
-}
-
-/* ── Backup root ────────────────────────────────────────────────────────── */
-
-const char *get_backup_root(int persisted)
-{
-    if (persisted)
+    n = strlen(s);
+    for (i = 0; i < sizeof(tab) / sizeof(tab[0]); i++)
     {
-        const char *xdg = getenv("XDG_DATA_HOME");
-        if (xdg && *xdg)
+        size_t ln = strlen(tab[i].name);
+
+        if (n > ln || strncmp(s, tab[i].name, n) != 0)
+            continue;
+        if (type >= 0 && type != tab[i].type)
+            return -1;
+        type = tab[i].type;
+    }
+    return type;
+}
+
+int iv_backup_from_env(void)
+{
+    const char *vc = getenv("VERSION_CONTROL");
+
+    if (vc && *vc)
+        return iv_parse_backup_method(vc);
+    return IV_BACKUP_EXISTING;
+}
+
+static const char *file_basename(const char *path)
+{
+    const char *sl = strrchr(path, '/');
+
+    return sl ? sl + 1 : path;
+}
+
+/* Highest N in dir for basename.~N~, or 0 if none. */
+static int max_numbered_backup(const char *path)
+{
+    char dirbuf[PATH_MAX];
+    const char *base = file_basename(path);
+    const char *slash = strrchr(path, '/');
+    const char *dir;
+    size_t blen = strlen(base);
+    DIR *d;
+    struct dirent *e;
+    int maxn = 0;
+
+    if (slash)
+    {
+        size_t dlen = (size_t)(slash - path);
+
+        if (dlen == 0)
         {
-            static char buf[PATH_MAX];
-            if (join_path2(buf, sizeof(buf), xdg, "iv") != 0)
-            {
-                if (sizeof(buf))
-                    buf[0] = '\0';
-                return buf;
-            }
-            return buf;
-        }
-        const char *home = getenv("HOME");
-        if (!home)
-        {
-            struct passwd *pw = getpwuid(getuid());
-            home = pw ? pw->pw_dir : "/tmp";
-        }
-        static char buf[PATH_MAX];
-        if (join_path2(buf, sizeof(buf), home, ".local/share/iv") != 0)
-        {
-            if (sizeof(buf))
-                buf[0] = '\0';
-            return buf;
-        }
-        return buf;
-    }
-    /* Ephemeral */
-    const char *env = getenv("IV_BACKUP_DIR");
-    if (env && *env)
-        return env;
-    static char buf[PATH_MAX];
-    const char *user = get_username();
-    size_t pre = strlen("/tmp/iv_");
-    size_t ulen = user ? strlen(user) : 0;
-    if (pre + ulen + 1 > sizeof(buf))
-    {
-        if (sizeof(buf))
-            buf[0] = '\0';
-        return buf;
-    }
-    memcpy(buf, "/tmp/iv_", pre);
-    if (ulen)
-        memcpy(buf + pre, user, ulen);
-    buf[pre + ulen] = '\0';
-    return buf;
-}
-
-/* ── Per-file subdirectory ──────────────────────────────────────────────── */
-
-/* Find the repository root directory by walking up from path:
- * the first directory that contains .git, or the highest reachable directory.
- * Copies the basename (not the full path) into repo_name. */
-static void find_repo_root_name(const char *abspath, char *repo_name, size_t size)
-{
-    char dir[PATH_MAX];
-    if (!abspath)
-        abspath = "";
-    {
-        size_t alen = strlen(abspath);
-        if (alen >= sizeof(dir))
-            alen = sizeof(dir) - 1;
-        memcpy(dir, abspath, alen);
-        dir[alen] = '\0';
-    }
-
-    /* Walk up until we find .git or reach filesystem root */
-    char best[PATH_MAX];
-    {
-        size_t dlen = strlen(dir);
-        if (dlen >= sizeof(best))
-            dlen = sizeof(best) - 1;
-        memcpy(best, dir, dlen);
-        best[dlen] = '\0';
-    }
-
-    for (;;)
-    {
-        char probe[PATH_MAX];
-        if (join_path2(probe, sizeof(probe), dir, ".git") != 0)
-            break;
-        struct stat st;
-        if (stat(probe, &st) == 0)
-        {
-            /* Found .git: repo root is dir */
-            {
-                size_t dlen = strlen(dir);
-                if (dlen >= sizeof(best))
-                    dlen = sizeof(best) - 1;
-                memcpy(best, dir, dlen);
-                best[dlen] = '\0';
-            }
-            break;
-        }
-        /* Go up one level */
-        char *slash = strrchr(dir, '/');
-
-        if (!slash || slash == dir)
-            break;
-
-        *slash = '\0';
-    }
-
-    /* Keep only the basename of the root directory */
-    const char *base = strrchr(best, '/');
-    const char *src = base ? base + 1 : best;
-    if (size == 0)
-        return;
-    {
-        size_t slen = strlen(src);
-        if (slen >= size)
-            slen = size - 1;
-        memcpy(repo_name, src, slen);
-        repo_name[slen] = '\0';
-    }
-    if (!repo_name[0])
-        snprintf(repo_name, size, "root");
-}
-
-void get_backup_subdir(const char *filename, char *buf, size_t size)
-{
-    /* Resolve absolute path */
-    char abspath[PATH_MAX];
-    if (!realpath(filename, abspath))
-    {
-        /* If the file doesn't exist yet, build it manually */
-        if (filename[0] == '/')
-        {
-            snprintf(abspath, sizeof(abspath), "%s", filename);
+            dir = "/";
         }
         else
         {
-            char cwd[PATH_MAX];
-            if (!getcwd(cwd, sizeof(cwd)))
-                snprintf(cwd, sizeof(cwd), ".");
-            if (join_path2(abspath, sizeof(abspath), cwd, filename) != 0)
-            {
-                if (sizeof(abspath))
-                    abspath[0] = '\0';
-                return;
-            }
+            if (dlen >= sizeof(dirbuf))
+                return 0;
+            memcpy(dirbuf, path, dlen);
+            dirbuf[dlen] = '\0';
+            dir = dirbuf;
         }
-    }
-
-    char repo_name[256];
-    find_repo_root_name(abspath, repo_name, sizeof(repo_name));
-
-    /* Relative path from the repo root to the file.
-     * If we didn't find a repo root with .git, we use the sanitized full path. */
-    /* Sanitize: replace '/' with '%' in the file's full path,
-     * prefixed with the repo name. */
-    char sanitized[PATH_MAX];
-    size_t j = 0;
-    /* Skip the leading '/' in abspath */
-    const char *p = abspath[0] == '/' ? abspath + 1 : abspath;
-    /* Look for the repo prefix in the absolute path so we can omit it */
-    /* Simplification: we only use the file basename + repo as prefix */
-    /* Build: repo_name % sanitized_relative_path */
-    for (; *p && j < sizeof(sanitized) - 1; p++)
-        sanitized[j++] = (*p == '/') ? '%' : *p;
-    sanitized[j] = '\0';
-
-    /* Final subdir: repo_name%rest_of_path (do not repeat repo_name if already present) */
-    /* Check whether sanitized starts with repo_name% */
-    size_t rlen = strlen(repo_name);
-    if (strncmp(sanitized, repo_name, rlen) == 0 &&
-        (sanitized[rlen] == '%' || sanitized[rlen] == '\0'))
-    {
-        if (size == 0)
-            return;
-        strncpy(buf, sanitized, size - 1);
-        buf[size - 1] = '\0';
     }
     else
-    {
-        size_t slen = strlen(sanitized);
-        if (size == 0)
-            return;
-        if (rlen + 1 + slen + 1 > size)
-        {
-            buf[0] = '\0';
-            return;
-        }
-        memcpy(buf, repo_name, rlen);
-        buf[rlen] = '%';
-        memcpy(buf + rlen + 1, sanitized, slen);
-        buf[rlen + 1 + slen] = '\0';
-    }
-}
-
-void get_backup_dir_for_file(const char *filename, int persisted,
-                             char *buf, size_t size)
-{
-    char subdir[PATH_MAX];
-    get_backup_subdir(filename, subdir, sizeof(subdir));
-    if (join_path2(buf, size, get_backup_root(persisted), subdir) != 0)
-    {
-        if (size)
-            buf[0] = '\0';
-        return;
-    }
-    mkdir_p(buf);
-}
-
-void get_backup_path_n(const char *filename, int persisted, int n,
-                       char *buf, size_t size)
-{
-    char dir[PATH_MAX];
-    get_backup_dir_for_file(filename, persisted, dir, sizeof(dir));
-    if (join_path_num(buf, size, dir, n, ".bak") != 0)
-    {
-        if (size)
-            buf[0] = '\0';
-        return;
-    }
-}
-
-void get_backup_meta_path(const char *filename, int persisted, int n,
-                          char *buf, size_t size)
-{
-    char dir[PATH_MAX];
-    get_backup_dir_for_file(filename, persisted, dir, sizeof(dir));
-    if (join_path_num(buf, size, dir, n, ".meta") != 0)
-    {
-        if (size)
-            buf[0] = '\0';
-        return;
-    }
-}
-
-/* ── Backup: create ─────────────────────────────────────────────────────── */
-
-/* Count how many backup slots exist for filename. */
-static int count_backup_slots(const char *filename, int persisted)
-{
-    char path[PATH_MAX];
-    int n = 1;
-    while (1)
-    {
-        get_backup_path_n(filename, persisted, n, path, sizeof(path));
-        struct stat st;
-        if (stat(path, &st) != 0)
-            break;
-        n++;
-    }
-    return n - 1;
-}
-
-int backup_file(const char *filename, int persisted)
-{
-    struct stat st;
-    int slots;
-    char src[PATH_MAX], dst[PATH_MAX];
-    FILE *meta;
-
-    if (stat(filename, &st) != 0)
-        return (errno == ENOENT) ? 0 : -1;
-
-    slots = count_backup_slots(filename, persisted);
-    for (int k = slots; k >= IV_BACKUP_SLOTS; k--)
-    {
-        get_backup_path_n(filename, persisted, k, src, sizeof(src));
-        unlink(src);
-        get_backup_meta_path(filename, persisted, k, src, sizeof(src));
-        unlink(src);
-    }
-    if (slots >= IV_BACKUP_SLOTS)
-        slots = IV_BACKUP_SLOTS - 1;
-
-    for (int k = slots; k >= 1; k--)
-    {
-        get_backup_path_n(filename, persisted, k, src, sizeof(src));
-        get_backup_path_n(filename, persisted, k + 1, dst, sizeof(dst));
-        if (rename(src, dst) != 0 && errno != ENOENT)
-            return -1;
-
-        get_backup_meta_path(filename, persisted, k, src, sizeof(src));
-        get_backup_meta_path(filename, persisted, k + 1, dst, sizeof(dst));
-        if (rename(src, dst) != 0 && errno != ENOENT)
-            return -1;
-    }
-
-    get_backup_path_n(filename, persisted, 1, dst, sizeof(dst));
-    if (iv_copy_file(filename, dst) != 0)
-        return -1;
-
-    get_backup_meta_path(filename, persisted, 1, dst, sizeof(dst));
-    meta = fopen(dst, "w");
-    if (meta)
-    {
-        fprintf(meta, "%ld %s\n", (long)time(NULL), get_username());
-        if (fclose(meta) != 0)
-            return -1;
-    }
-    return 0;
-}
-
-/* ── persist / unpersist ────────────────────────────────────────────────── */
-
-int transfer_backup_repo(const char *filename, int to_persist)
-{
-    char src_dir[PATH_MAX], dst_dir[PATH_MAX];
-    get_backup_dir_for_file(filename, !to_persist, src_dir, sizeof(src_dir));
-    get_backup_dir_for_file(filename, to_persist, dst_dir, sizeof(dst_dir));
-
-    /* Try atomic rename first */
-    if (rename(src_dir, dst_dir) == 0)
-        return 0;
-    if (errno != EXDEV)
-    {
-        perror("iv: transfer_backup_repo rename");
-        return -1;
-    }
-
-    /* Cross-filesystem: copy file by file */
-    DIR *d = opendir(src_dir);
+        dir = ".";
+    d = opendir(dir);
     if (!d)
-    {
-        perror(src_dir);
-        return -1;
-    }
-
-    struct dirent *e;
-
-    int ok = 0;
-
+        return 0;
     while ((e = readdir(d)))
     {
-        if (e->d_name[0] == '.')
-            continue;
+        const char *nm = e->d_name;
+        const char *p;
+        int n = 0;
 
-        char s[PATH_MAX * 2], t[PATH_MAX * 2];
-
-        if (join_path2(s, sizeof(s), src_dir, e->d_name) != 0)
-        {
-            if (sizeof(s))
-                s[0] = '\0';
+        if (strncmp(nm, base, blen) != 0 || nm[blen] != '.' || nm[blen + 1] != '~')
             continue;
-        }
-        if (join_path2(t, sizeof(t), dst_dir, e->d_name) != 0)
-        {
-            if (sizeof(t))
-                t[0] = '\0';
+        p = nm + blen + 2;
+        if (!isdigit((unsigned char)*p))
             continue;
-        }
-
-        if (move_file(s, t) != 0)
+        while (isdigit((unsigned char)*p))
         {
-            fprintf(stderr, "iv: failed to move %s → %s\n", s, t);
-            ok = -1;
+            n = n * 10 + (*p - '0');
+            p++;
         }
+        if (p[0] == '~' && p[1] == '\0' && n > maxn)
+            maxn = n;
     }
     closedir(d);
+    return maxn;
+}
 
-    if (ok == 0)
-        rmdir(src_dir);
+int iv_backup_file(const char *path, const IvOpts *opts)
+{
+    struct stat st;
+    char dst[PATH_MAX];
+    const char *suffix;
+    int type;
+    int n;
 
-    return ok;
+    if (!opts || opts->backup == IV_BACKUP_NONE)
+        return 0;
+    if (stat(path, &st) != 0)
+        return (errno == ENOENT) ? 0 : -1;
+    type = opts->backup;
+    if (type == IV_BACKUP_EXISTING)
+        type = max_numbered_backup(path) > 0 ? IV_BACKUP_NUMBERED
+                                             : IV_BACKUP_SIMPLE;
+    suffix = opts->backup_suffix;
+    if (!suffix || !*suffix)
+        suffix = getenv("SIMPLE_BACKUP_SUFFIX");
+    if (!suffix || !*suffix)
+        suffix = "~";
+    if (type == IV_BACKUP_NUMBERED)
+    {
+        n = max_numbered_backup(path) + 1;
+        if (snprintf(dst, sizeof(dst), "%s.~%d~", path, n) >= (int)sizeof(dst))
+            return -1;
+    }
+    else if (snprintf(dst, sizeof(dst), "%s%s", path, suffix) >= (int)sizeof(dst))
+        return -1;
+    return iv_copy_file(path, dst);
 }
 
 /* ── Write with escapes ─────────────────────────────────────────────────── */
@@ -571,12 +274,11 @@ int apply_patch(const char *filename, char *lines[], int count,
                 const IvOpts *opts)
 {
     struct PatchCtx ctx = {lines, count, start, end, new_text, mode};
-    int do_backup = !opts->no_backup && !opts->to_stdout;
     int wrote_new = 0;
 
-    if (do_backup && !opts->dry_run)
+    if (opts->backup != IV_BACKUP_NONE && !opts->to_stdout && !opts->dry_run)
     {
-        if (backup_file(filename, opts->persist) != 0)
+        if (iv_backup_file(filename, opts) != 0)
         {
             fprintf(stderr, "iv: backup failed, aborting (original unchanged)\n");
             return -1;
@@ -630,7 +332,7 @@ static char *replace_in_string(const char *line, const char *pat,
     const char *cur = line;
 
     *n = 0;
-    if (!pat || !*pat || !strstr(line, pat))
+    if (!pat || !*pat)
         return NULL;
     cap = strlen(line) + 256;
     out = malloc(cap);
@@ -702,7 +404,7 @@ int search_replace(char *lines[], int count, const char *pattern,
                    const char *replacement, int global)
 {
     if (!pattern || !*pattern)
-        return 0;
+        return -1;
     int total = 0;
     for (int i = 0; i < count; i++)
     {
@@ -841,7 +543,7 @@ int search_replace_regex(char *lines[], int count, const char *pattern,
                          const char *replacement, int global)
 {
     if (!pattern || !*pattern)
-        return 0;
+        return -1;
     regex_t re;
     if (regcomp(&re, pattern, REG_EXTENDED) != 0)
         return -1;
@@ -882,7 +584,7 @@ int search_replace_filtered(char *lines[], int count, const char *pattern,
     int total = 0;
 
     if (!pattern || !*pattern)
-        return 0;
+        return -1;
     if (filter && *filter && filter_regex)
     {
         if (regcomp(&fre, filter, REG_EXTENDED | REG_NOSUB) != 0)
@@ -919,7 +621,7 @@ int search_replace_regex_filtered(char *lines[], int count, const char *pattern,
     int total = 0;
 
     if (!pattern || !*pattern)
-        return 0;
+        return -1;
     if (regcomp(&re, pattern, REG_EXTENDED) != 0)
         return -1;
     if (filter && *filter && filter_regex)
@@ -1006,6 +708,243 @@ int replace_field(char *lines[], int count, char delim, int field_num,
     return count;
 }
 
+#define IV_CHUNK (256 * 1024)
+
+typedef struct
+{
+    FILE *in;
+    char *buf;
+    size_t cap;
+    size_t len;
+    size_t pos;
+    int eof;
+    int binary;
+} IvBlk;
+
+static int put_ul(FILE *out, const void *p, size_t n)
+{
+    if (!n)
+        return 0;
+    if (fwrite_unlocked(p, 1, n, out) == n)
+        return 0;
+    return (iv_out_status(out) == 1) ? 1 : -1;
+}
+
+static int blk_init(IvBlk *b, FILE *in)
+{
+    int fd;
+
+    b->in = in;
+    b->cap = IV_CHUNK;
+    b->len = 0;
+    b->pos = 0;
+    b->eof = 0;
+    b->binary = 0;
+    b->buf = malloc(b->cap);
+    if (!b->buf)
+        return -1;
+    fd = fileno(in);
+    if (fd >= 0)
+        (void)posix_fadvise(fd, 0, 0, POSIX_FADV_SEQUENTIAL);
+    return 0;
+}
+
+static void blk_free(IvBlk *b)
+{
+    free(b->buf);
+    b->buf = NULL;
+}
+
+static int blk_refill(IvBlk *b)
+{
+    size_t keep = b->len - b->pos;
+    size_t got;
+
+    if (keep)
+        memmove(b->buf, b->buf + b->pos, keep);
+    b->len = keep;
+    b->pos = 0;
+    if (b->eof)
+        return 0;
+    if (b->len == b->cap)
+    {
+        size_t nc = b->cap * 2;
+        char *nb = realloc(b->buf, nc);
+
+        if (!nb)
+            return -1;
+        b->buf = nb;
+        b->cap = nc;
+    }
+    got = fread_unlocked(b->buf + b->len, 1, b->cap - b->len, b->in);
+    if (got && memchr(b->buf + b->len, 0, got))
+        b->binary = 1;
+    b->len += got;
+    if (got == 0)
+        b->eof = 1;
+    if (ferror(b->in))
+        return -1;
+    return 0;
+}
+
+/* 1 = line, 0 = EOF, -1 = I/O, -2 = NUL in input. *line lives until next call. */
+static int blk_line(IvBlk *b, const char **line, size_t *nlen)
+{
+    for (;;)
+    {
+        if (b->binary)
+            return -2;
+        if (b->pos < b->len)
+        {
+            char *nl = memchr(b->buf + b->pos, '\n', b->len - b->pos);
+
+            if (nl)
+            {
+                *line = b->buf + b->pos;
+                *nlen = (size_t)(nl - (b->buf + b->pos)) + 1;
+                b->pos += *nlen;
+                return 1;
+            }
+            if (b->eof)
+            {
+                if (b->pos < b->len)
+                {
+                    *line = b->buf + b->pos;
+                    *nlen = b->len - b->pos;
+                    b->pos = b->len;
+                    return 1;
+                }
+                return 0;
+            }
+        }
+        else if (b->eof)
+            return 0;
+        if (blk_refill(b) != 0)
+            return -1;
+    }
+}
+
+static int stream_subst_literal(FILE *in, FILE *out, const char *pat,
+                                const char *repl, int global,
+                                const char *filter, int *nrepl)
+{
+    IvBlk blk;
+    size_t plen;
+    size_t rlen;
+    size_t flen;
+    int total = 0;
+    int pr = 0;
+    int rc;
+
+    if (nrepl)
+        *nrepl = 0;
+    if (!pat)
+        pat = "";
+    if (!repl)
+        repl = "";
+    plen = strlen(pat);
+    rlen = strlen(repl);
+    flen = (filter && *filter) ? strlen(filter) : 0;
+    if (out != stdout)
+        iv_enlarge_buf(out);
+    if (blk_init(&blk, in) != 0)
+        return -1;
+
+    flockfile(out);
+    for (;;)
+    {
+        const char *line;
+        const char *hit;
+        const char *cur;
+        size_t nread;
+        size_t left;
+        int n = 0;
+
+        rc = blk_line(&blk, &line, &nread);
+        if (rc == 0)
+            break;
+        if (rc == -2)
+        {
+            funlockfile(out);
+            blk_free(&blk);
+            fprintf(stderr, "iv: refusing to edit binary file\n");
+            return -1;
+        }
+        if (rc < 0)
+        {
+            funlockfile(out);
+            blk_free(&blk);
+            return -1;
+        }
+        if (flen && !memmem(line, nread, filter, flen))
+        {
+            pr = put_ul(out, line, nread);
+            if (pr != 0)
+                break;
+            continue;
+        }
+        hit = (plen && nread) ? memmem(line, nread, pat, plen) : NULL;
+        if (!plen || !hit)
+        {
+            pr = put_ul(out, line, nread);
+            if (pr != 0)
+                break;
+            continue;
+        }
+        if (rlen == plen)
+        {
+            char *w = (char *)line;
+            size_t rest = nread;
+
+            while (hit)
+            {
+                memcpy((char *)hit, repl, rlen);
+                n++;
+                rest -= (size_t)(hit - w) + plen;
+                w = (char *)hit + plen;
+                if (!global || !rest)
+                    break;
+                hit = memmem(w, rest, pat, plen);
+            }
+            pr = put_ul(out, line, nread);
+            if (pr != 0)
+                break;
+            total += n;
+            continue;
+        }
+        cur = line;
+        left = nread;
+        while (hit)
+        {
+            pr = put_ul(out, cur, (size_t)(hit - cur));
+            if (pr == 0)
+                pr = put_ul(out, repl, rlen);
+            if (pr != 0)
+                goto done;
+            n++;
+            left -= (size_t)(hit - cur) + plen;
+            cur = hit + plen;
+            if (!global || !plen || !left)
+                break;
+            hit = memmem(cur, left, pat, plen);
+        }
+        pr = put_ul(out, cur, left);
+        if (pr != 0)
+            break;
+        total += n;
+    }
+done:
+    funlockfile(out);
+    blk_free(&blk);
+    if (pr != 0)
+        return (pr > 0) ? 0 : -1;
+    if (ferror(in))
+        return -1;
+    if (nrepl)
+        *nrepl = total;
+    return 0;
+}
+
 int iv_stream_subst(FILE *in, FILE *out, const char *(*pairs)[2],
                     int npairs, const IvOpts *opts, int *nrepl)
 {
@@ -1020,6 +959,22 @@ int iv_stream_subst(FILE *in, FILE *out, const char *(*pairs)[2],
 
     if (nrepl)
         *nrepl = 0;
+    for (i = 0; i < npairs; i++)
+    {
+        if (!pairs[i][0] || !pairs[i][0][0])
+        {
+            fprintf(stderr, "iv: empty pattern\n");
+            return -1;
+        }
+    }
+    if (!opts->use_regex && npairs == 1)
+        return stream_subst_literal(in, out, pairs[0][0], pairs[0][1],
+                                    opts->global_replace, opts->multimatch,
+                                    nrepl);
+    if (in != stdin)
+        iv_enlarge_buf(in);
+    if (out != stdout)
+        iv_enlarge_buf(out);
     if (opts->use_regex)
     {
         res = calloc((size_t)npairs, sizeof(*res));
@@ -1093,20 +1048,25 @@ int iv_stream_subst(FILE *in, FILE *out, const char *(*pairs)[2],
                     free(nl);
             }
         }
-        if (fputs(cur, out) == EOF)
         {
-            if (owned)
-                free(cur);
-            free(line);
-            if (res)
+            int pr = owned ? iv_fputs(out, cur)
+                           : iv_fwrite(out, line, (size_t)nread);
+
+            if (pr != 0)
             {
-                for (i = 0; i < npairs; i++)
-                    regfree(&res[i]);
-                free(res);
+                if (owned)
+                    free(cur);
+                free(line);
+                if (res)
+                {
+                    for (i = 0; i < npairs; i++)
+                        regfree(&res[i]);
+                    free(res);
+                }
+                if (fp)
+                    regfree(fp);
+                return (pr > 0) ? 0 : -1;
             }
-            if (fp)
-                regfree(fp);
-            return -1;
         }
         if (owned)
             free(cur);
@@ -1130,29 +1090,85 @@ int iv_stream_subst(FILE *in, FILE *out, const char *(*pairs)[2],
 int iv_stream_fields(FILE *in, FILE *out, char delim, int field_num,
                      const char *value)
 {
-    char *line = NULL;
-    size_t cap = 0;
-    ssize_t nread;
+    IvBlk blk;
+    size_t vlen;
+    int pr = 0;
+    int rc;
 
-    while ((nread = getline(&line, &cap, in)) != -1)
+    if (!value)
+        value = "";
+    vlen = strlen(value);
+    if (out != stdout)
+        iv_enlarge_buf(out);
+    if (blk_init(&blk, in) != 0)
+        return -1;
+
+    flockfile(out);
+    for (;;)
     {
-        char *nl;
-        if (memchr(line, 0, (size_t)nread))
+        const char *line;
+        const char *p;
+        const char *end;
+        const char *field_start;
+        size_t nread;
+        int f;
+
+        rc = blk_line(&blk, &line, &nread);
+        if (rc == 0)
+            break;
+        if (rc == -2)
         {
-            free(line);
+            funlockfile(out);
+            blk_free(&blk);
             fprintf(stderr, "iv: refusing to edit binary file\n");
             return -1;
         }
-        nl = replace_field_in_line(line, delim, field_num, value);
-        if (!nl || fputs(nl, out) == EOF)
+        if (rc < 0)
         {
-            free(nl);
-            free(line);
+            funlockfile(out);
+            blk_free(&blk);
             return -1;
         }
-        free(nl);
+        p = line;
+        end = line + nread;
+        field_start = line;
+        f = 1;
+        while (f < field_num && p < end)
+        {
+            const char *comma = memchr(p, delim, (size_t)(end - p));
+
+            if (!comma)
+                break;
+            f++;
+            p = comma + 1;
+            field_start = p;
+        }
+        if (f != field_num)
+            pr = put_ul(out, line, nread);
+        else
+        {
+            const char *stop = memchr(p, delim, (size_t)(end - p));
+
+            if (!stop)
+            {
+                /* Drop trailing newline from the field, keep it after value. */
+                stop = end;
+                if (stop > p && stop[-1] == '\n')
+                    stop--;
+            }
+            pr = put_ul(out, line, (size_t)(field_start - line));
+            if (pr == 0)
+                pr = put_ul(out, value, vlen);
+            if (pr == 0)
+                pr = put_ul(out, stop, (size_t)(end - stop));
+        }
+        if (pr != 0)
+            break;
     }
-    free(line);
+    funlockfile(out);
+    blk_free(&blk);
+    if (pr != 0)
+        return (pr > 0) ? 0 : -1;
     return ferror(in) ? -1 : 0;
 }
 
@@ -1216,8 +1232,12 @@ static char *ring_at(const LineRing *r, int idx)
 static int emit_line(FILE *out, const char *line, int lineno, int numbered)
 {
     if (numbered)
-        return (fprintf(out, "%4d | %s", lineno, line) < 0) ? -1 : 0;
-    return (fputs(line, out) == EOF) ? -1 : 0;
+    {
+        if (fprintf(out, "%4d | %s", lineno, line) >= 0)
+            return 0;
+        return (iv_out_status(out) == 1) ? 1 : -1;
+    }
+    return iv_fputs(out, line);
 }
 
 static int emit_repl(FILE *out, const char *text)
@@ -1225,7 +1245,7 @@ static int emit_repl(FILE *out, const char *text)
     if (!text)
         text = "";
     write_with_escapes(out, text);
-    return ferror(out) ? -1 : 0;
+    return iv_out_status(out);
 }
 
 static int in_forward(int n, const IvRangePlan *p)
@@ -1263,23 +1283,31 @@ static int flush_tail(FILE *out, const LineRing *r, const IvRangePlan *p,
         lineno = total - r->n + 1 + k;
         if (op == IV_STREAM_VIEW)
         {
-            if (act && emit_line(out, ring_at(r, k), lineno, !no_numbers) != 0)
-                return -1;
+            if (act)
+            {
+                int pr = emit_line(out, ring_at(r, k), lineno, !no_numbers);
+
+                if (pr != 0)
+                    return pr;
+            }
         }
         else if (op == IV_STREAM_DELETE)
         {
-            if (!act && emit_line(out, ring_at(r, k), 0, 0) != 0)
-                return -1;
+            if (!act)
+            {
+                int pr = emit_line(out, ring_at(r, k), 0, 0);
+
+                if (pr != 0)
+                    return pr;
+            }
         }
         else if (op == IV_STREAM_REPLACE)
         {
-            if (act)
-            {
-                if (emit_repl(out, text) != 0)
-                    return -1;
-            }
-            else if (emit_line(out, ring_at(r, k), 0, 0) != 0)
-                return -1;
+            int pr = act ? emit_repl(out, text)
+                         : emit_line(out, ring_at(r, k), 0, 0);
+
+            if (pr != 0)
+                return pr;
         }
     }
     return 0;
@@ -1325,21 +1353,38 @@ int iv_stream_by_plan(FILE *in, FILE *out, const IvRangePlan *p, int op,
             {
                 if (p->end >= 0 && n > p->end)
                     break;
-                if (hit && emit_line(out, line, n, !no_numbers) != 0)
-                    goto fail;
+                if (hit)
+                {
+                    int pr = emit_line(out, line, n, !no_numbers);
+
+                    if (pr > 0)
+                        goto done;
+                    if (pr < 0)
+                        goto fail;
+                }
             }
             else if (op == IV_STREAM_DELETE)
             {
-                if (!hit && emit_line(out, line, 0, 0) != 0)
-                    goto fail;
+                if (!hit)
+                {
+                    int pr = emit_line(out, line, 0, 0);
+
+                    if (pr > 0)
+                        goto done;
+                    if (pr < 0)
+                        goto fail;
+                }
             }
-            else if (hit)
+            else
             {
-                if (emit_repl(out, text) != 0)
+                int pr = hit ? emit_repl(out, text)
+                             : emit_line(out, line, 0, 0);
+
+                if (pr > 0)
+                    goto done;
+                if (pr < 0)
                     goto fail;
             }
-            else if (emit_line(out, line, 0, 0) != 0)
-                goto fail;
             continue;
         }
 
@@ -1347,8 +1392,14 @@ int iv_stream_by_plan(FILE *in, FILE *out, const IvRangePlan *p, int op,
         {
             if (op == IV_STREAM_VIEW)
                 continue;
-            if (emit_line(out, line, 0, 0) != 0)
-                goto fail;
+            {
+                int pr = emit_line(out, line, 0, 0);
+
+                if (pr > 0)
+                    goto done;
+                if (pr < 0)
+                    goto fail;
+            }
             continue;
         }
 
@@ -1363,36 +1414,41 @@ int iv_stream_by_plan(FILE *in, FILE *out, const IvRangePlan *p, int op,
         {
             if (op == IV_STREAM_VIEW)
                 free(evicted);
-            else if (emit_line(out, evicted, 0, 0) != 0)
-            {
-                free(evicted);
-                goto fail;
-            }
             else
+            {
+                int pr = emit_line(out, evicted, 0, 0);
+
                 free(evicted);
+                if (pr > 0)
+                    goto done;
+                if (pr < 0)
+                    goto fail;
+            }
         }
         else
         {
             /* hybrid: evicted is inside the range */
             if (op == IV_STREAM_VIEW)
             {
-                if (emit_line(out, evicted, n - hold, !no_numbers) != 0)
-                {
-                    free(evicted);
-                    goto fail;
-                }
+                int pr = emit_line(out, evicted, n - hold, !no_numbers);
+
                 free(evicted);
+                if (pr > 0)
+                    goto done;
+                if (pr < 0)
+                    goto fail;
             }
             else if (op == IV_STREAM_DELETE)
                 free(evicted);
             else
             {
-                if (emit_repl(out, text) != 0)
-                {
-                    free(evicted);
-                    goto fail;
-                }
+                int pr = emit_repl(out, text);
+
                 free(evicted);
+                if (pr > 0)
+                    goto done;
+                if (pr < 0)
+                    goto fail;
             }
         }
     }
@@ -1401,7 +1457,11 @@ int iv_stream_by_plan(FILE *in, FILE *out, const IvRangePlan *p, int op,
 
     if (p->kind == IV_RANGE_TAIL)
     {
-        if (flush_tail(out, &ring, p, op, text, no_numbers, n) != 0)
+        int pr = flush_tail(out, &ring, p, op, text, no_numbers, n);
+
+        if (pr > 0)
+            goto done;
+        if (pr < 0)
             goto fail;
     }
     else if (p->kind == IV_RANGE_HYBRID)
@@ -1410,14 +1470,24 @@ int iv_stream_by_plan(FILE *in, FILE *out, const IvRangePlan *p, int op,
 
         for (k = 0; k < ring.n; k++)
         {
+            int pr;
+
             if (op == IV_STREAM_VIEW)
                 continue;
-            if (emit_line(out, ring_at(&ring, k), 0, 0) != 0)
+            pr = emit_line(out, ring_at(&ring, k), 0, 0);
+            if (pr > 0)
+                goto done;
+            if (pr < 0)
                 goto fail;
         }
     }
     ring_free(&ring);
     return ferror(in) ? -1 : 0;
+
+done:
+    free(line);
+    ring_free(&ring);
+    return 0;
 
 fail:
     free(line);
@@ -1428,41 +1498,85 @@ fail:
 int iv_stream_delete_match(FILE *in, FILE *out, const char *filter,
                            int use_regex)
 {
-    char *line = NULL;
-    size_t cap = 0;
-    ssize_t nread;
+    IvBlk blk;
+    size_t flen = 0;
     regex_t re;
-    regex_t *fp = NULL;
+    int pr = 0;
+    int rc = 0;
 
+    if (out != stdout)
+        iv_enlarge_buf(out);
     if (filter && *filter && use_regex)
     {
+        char *line = NULL;
+        size_t cap = 0;
+        ssize_t nread;
+
         if (regcomp(&re, filter, REG_EXTENDED | REG_NOSUB) != 0)
             return -1;
-        fp = &re;
-    }
-    while ((nread = getline(&line, &cap, in)) != -1)
-    {
-        if (memchr(line, 0, (size_t)nread))
+        flockfile(out);
+        while ((nread = getline(&line, &cap, in)) != -1)
         {
-            free(line);
-            if (fp)
-                regfree(fp);
+            if (memchr(line, 0, (size_t)nread))
+            {
+                funlockfile(out);
+                free(line);
+                regfree(&re);
+                fprintf(stderr, "iv: refusing to edit binary file\n");
+                return -1;
+            }
+            if (regexec(&re, line, 0, NULL, 0) == 0)
+                continue;
+            pr = put_ul(out, line, (size_t)nread);
+            if (pr != 0)
+                break;
+        }
+        funlockfile(out);
+        free(line);
+        regfree(&re);
+        if (pr != 0)
+            return (pr > 0) ? 0 : -1;
+        return ferror(in) ? -1 : 0;
+    }
+    if (filter && *filter)
+        flen = strlen(filter);
+    if (blk_init(&blk, in) != 0)
+        return -1;
+
+    flockfile(out);
+    for (;;)
+    {
+        const char *line;
+        size_t nread;
+        int keep;
+
+        rc = blk_line(&blk, &line, &nread);
+        if (rc == 0)
+            break;
+        if (rc == -2)
+        {
+            funlockfile(out);
+            blk_free(&blk);
             fprintf(stderr, "iv: refusing to edit binary file\n");
             return -1;
         }
-        if (line_matches_filter(line, filter, fp))
-            continue;
-        if (fputs(line, out) == EOF)
+        if (rc < 0)
         {
-            free(line);
-            if (fp)
-                regfree(fp);
+            funlockfile(out);
+            blk_free(&blk);
             return -1;
         }
+        keep = flen ? (memmem(line, nread, filter, flen) == NULL) : 0;
+        if (!keep)
+            continue;
+        pr = put_ul(out, line, nread);
+        if (pr != 0)
+            break;
     }
-    free(line);
-    if (fp)
-        regfree(fp);
+    funlockfile(out);
+    blk_free(&blk);
+    if (pr != 0)
+        return (pr > 0) ? 0 : -1;
     return ferror(in) ? -1 : 0;
 }
 
@@ -1502,253 +1616,20 @@ int iv_stream_replace_match(FILE *in, FILE *out, const char *filter,
             }
             continue;
         }
-        if (fputs(line, out) == EOF)
         {
-            free(line);
-            if (fp)
-                regfree(fp);
-            return -1;
+            int pr = iv_fputs(out, line);
+
+            if (pr != 0)
+            {
+                free(line);
+                if (fp)
+                    regfree(fp);
+                return (pr > 0) ? 0 : -1;
+            }
         }
     }
     free(line);
     if (fp)
         regfree(fp);
     return ferror(in) ? -1 : 0;
-}
-
-/* ── Metadata ───────────────────────────────────────────────────────────── */
-
-static int read_backup_meta(const char *path_meta, time_t *out_ts,
-                            char *out_user, size_t user_size __attribute__((unused)))
-{
-    FILE *f = fopen(path_meta, "r");
-    if (!f)
-        return -1;
-    long epoch = 0;
-    int n = fscanf(f, "%ld %255s", &epoch, out_user);
-    fclose(f);
-    if (n >= 1)
-    {
-        *out_ts = (time_t)epoch;
-        if (n < 2)
-            out_user[0] = '\0';
-        return 0;
-    }
-    return -1;
-}
-
-/* ── Backup listing ─────────────────────────────────────────────────────── */
-
-void list_backups(const char *filter, int persisted)
-{
-    const char *root = get_backup_root(persisted);
-    DIR *d = opendir(root);
-    if (!d)
-    {
-        perror(root);
-        return;
-    }
-
-    struct dirent *e;
-    while ((e = readdir(d)))
-    {
-        if (e->d_name[0] == '.')
-            continue;
-
-        /* If there is a filter, verify that the subdir matches the file */
-        if (filter && *filter)
-        {
-            char subdir[PATH_MAX];
-            get_backup_subdir(filter, subdir, sizeof(subdir));
-            if (strcmp(e->d_name, subdir) != 0)
-                continue;
-        }
-
-        char subpath[PATH_MAX];
-        if (join_path2(subpath, sizeof(subpath), root, e->d_name) != 0)
-            continue;
-
-        /* List slots inside the subdirectory */
-        DIR *sd = opendir(subpath);
-        if (!sd)
-            continue;
-        struct dirent *se;
-        while ((se = readdir(sd)))
-        {
-            if (se->d_name[0] == '.')
-                continue;
-            size_t len = strlen(se->d_name);
-            if (len < 5 || strcmp(se->d_name + len - 4, ".bak") != 0)
-                continue;
-            char spath[PATH_MAX];
-            if (join_path2(spath, sizeof(spath), subpath, se->d_name) != 0)
-                continue;
-            struct stat st;
-            if (stat(spath, &st) == 0)
-                printf("%s  %zu bytes\n", spath, (size_t)st.st_size);
-        }
-        closedir(sd);
-    }
-    closedir(d);
-}
-
-void list_backups_with_meta(const char *filter, int persisted)
-{
-    const char *root = get_backup_root(persisted);
-    DIR *d = opendir(root);
-    if (!d)
-    {
-        perror(root);
-        return;
-    }
-
-    struct dirent *e;
-    while ((e = readdir(d)))
-    {
-        if (e->d_name[0] == '.')
-            continue;
-
-        if (filter && *filter)
-        {
-            char subdir[PATH_MAX];
-            get_backup_subdir(filter, subdir, sizeof(subdir));
-            if (strcmp(e->d_name, subdir) != 0)
-                continue;
-        }
-
-        char subpath[PATH_MAX];
-        if (join_path2(subpath, sizeof(subpath), root, e->d_name) != 0)
-            continue;
-
-        DIR *sd = opendir(subpath);
-        if (!sd)
-            continue;
-        struct dirent *se;
-        while ((se = readdir(sd)))
-        {
-            if (se->d_name[0] == '.')
-                continue;
-            size_t len = strlen(se->d_name);
-            if (len < 5 || strcmp(se->d_name + len - 4, ".bak") != 0)
-                continue;
-
-            char spath[PATH_MAX];
-            if (join_path2(spath, sizeof(spath), subpath, se->d_name) != 0)
-                continue;
-            struct stat st;
-            if (stat(spath, &st) != 0)
-                continue;
-
-            /* Read corresponding .meta */
-            char mpath[PATH_MAX];
-            snprintf(mpath, sizeof(mpath), "%.*smeta",
-                     (int)(strlen(spath) - 3), spath);
-            time_t ts = 0;
-            char user[256] = "";
-            int has_meta = (read_backup_meta(mpath, &ts, user, sizeof(user)) == 0);
-
-            printf("%s  %zu bytes", spath, (size_t)st.st_size);
-            if (has_meta)
-            {
-                char tbuf[64];
-                struct tm *tm = localtime(&ts);
-                if (tm && strftime(tbuf, sizeof(tbuf), "%Y-%m-%d %H:%M:%S", tm) > 0)
-                    printf("  %s  %s", tbuf, user[0] ? user : "?");
-            }
-            printf("\n");
-        }
-        closedir(sd);
-    }
-    closedir(d);
-}
-
-int show_backup_slot(const char *filename, int persisted, int n)
-{
-    char path_bak[PATH_MAX], path_meta[PATH_MAX];
-    get_backup_path_n(filename, persisted, n, path_bak, sizeof(path_bak));
-    get_backup_meta_path(filename, persisted, n, path_meta, sizeof(path_meta));
-
-    FILE *f = fopen(path_bak, "r");
-    if (!f)
-    {
-        fprintf(stderr, "iv: no backup %d found for %s\n", n, filename);
-        return -1;
-    }
-
-    time_t ts = 0;
-    char user[256] = "";
-    if (read_backup_meta(path_meta, &ts, user, sizeof(user)) == 0)
-    {
-        char buf[64];
-        struct tm *tm = localtime(&ts);
-        if (tm && strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", tm) > 0)
-            fprintf(stderr, "# backup %d  %s  user: %s\n", n, buf,
-                    user[0] ? user : "?");
-    }
-
-    char line[4096];
-    while (fgets(line, sizeof(line), f))
-        fputs(line, stdout);
-    fclose(f);
-    return 0;
-}
-
-/* ── Backup cleanup ─────────────────────────────────────────────────────── */
-
-void clean_backups(const char *filter, int persisted)
-{
-    const char *root = get_backup_root(persisted);
-    DIR *d = opendir(root);
-    if (!d)
-    {
-        perror(root);
-        return;
-    }
-
-    struct dirent *e;
-    int removed = 0;
-    while ((e = readdir(d)))
-    {
-        if (e->d_name[0] == '.')
-            continue;
-
-        if (filter && *filter)
-        {
-            char subdir[PATH_MAX * 2];
-
-            get_backup_subdir(filter, subdir, sizeof(subdir));
-            if (strcmp(e->d_name, subdir) != 0)
-                continue;
-        }
-
-        char subpath[PATH_MAX * 2];
-        snprintf(subpath, sizeof(subpath), "%s/%s", root, e->d_name);
-
-        DIR *sd = opendir(subpath);
-        if (!sd)
-            continue;
-        struct dirent *se;
-        while ((se = readdir(sd)))
-        {
-            if (se->d_name[0] == '.')
-                continue;
-
-            char spath[PATH_MAX * 2];
-
-            if (strlen(subpath) + strlen(se->d_name) + 2 > sizeof(spath))
-                continue;
-
-            if (join_path2(spath, sizeof(spath), subpath, se->d_name) != 0)
-                continue;
-
-            if (remove(spath) == 0)
-                removed++;
-        }
-        closedir(sd);
-        rmdir(subpath);
-    }
-    closedir(d);
-
-    if (removed > 0)
-        fprintf(stderr, "iv: removed %d file(s)\n", removed);
 }

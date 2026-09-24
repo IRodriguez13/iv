@@ -7,14 +7,14 @@ ZSH_COMPLETION_DIR ?= $(PREFIX)/share/zsh/site-functions
 FISH_COMPLETION_DIR ?= $(PREFIX)/share/fish/vendor_completions.d
 
 CC ?= gcc
-CFLAGS ?= -Wall -Wextra -O2 -D_POSIX_C_SOURCE=200809L
+CFLAGS ?= -Wall -Wextra -O2 -D_GNU_SOURCE -D_POSIX_C_SOURCE=200809L
 LDFLAGS ?=
 
 SRCS = main.c view.c edit.c range.c write.c
 OBJS = $(SRCS:.c=.o)
 TARGET = iv
 
-.PHONY: all clean install uninstall test
+.PHONY: all clean install uninstall test test-musl
 
 all: $(TARGET)
 
@@ -45,6 +45,15 @@ test: $(TARGET)
 	@./tests/smoke.sh "$(CURDIR)/$(TARGET)"
 	@./tests/safety.sh "$(CURDIR)/$(TARGET)"
 	@./tests/completions.sh
+	@./tests/run-misc.sh "$(CURDIR)/$(TARGET)"
+
+# Same suite against a musl-linked binary (reviewer libc matrix).
+test-musl:
+	$(MAKE) clean
+	$(MAKE) CC=musl-gcc TARGET=iv-musl
+	@./tests/smoke.sh "$(CURDIR)/iv-musl"
+	@./tests/safety.sh "$(CURDIR)/iv-musl"
+	@./tests/run-misc.sh "$(CURDIR)/iv-musl"
 
 clean:
-	rm -f $(TARGET) $(OBJS)
+	rm -f $(TARGET) iv-musl $(OBJS) tests/helpers/eintr_read.so

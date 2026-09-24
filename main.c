@@ -3,6 +3,7 @@
 
 #include "iv.h"
 #include <limits.h>
+#include <locale.h>
 #include <regex.h>
 #include <sys/stat.h>
 
@@ -16,35 +17,82 @@ static void usage(const char *prog)
     fprintf(stderr, "  %s -wc file\n", prog);
     fprintf(stderr, "  %s -n file \"pattern\" [--json]\n", prog);
     fprintf(stderr, "  %s -nv file \"pattern\" [--no-numbers]\n", prog);
-    fprintf(stderr, "  %s -u file [N]\n", prog);
-    fprintf(stderr, "  %s -diff [-u] [N] file\n", prog);
-    fprintf(stderr, "  %s -i|-insert file [start-end] \"text\" [-q] [--dry-run] [--no-backup]\n", prog);
+    fprintf(stderr, "  %s -i|-insert file [start-end] \"text\" [-q] [--dry-run]\n", prog);
     fprintf(stderr, "  %s -a file \"text\" [-q]\n", prog);
     fprintf(stderr, "  %s -p file [file...] [range] content [-q]\n", prog);
     fprintf(stderr, "  %s -pi file [file...] line content [-q]\n", prog);
-    fprintf(stderr, "  %s -d|-delete file [start-end] [-m pattern] [--dry-run] [--no-backup]\n", prog);
-    fprintf(stderr, "  %s -r|-replace file [start-end] \"text\" [-m pattern] [-q] [--dry-run] [--no-backup]\n", prog);
+    fprintf(stderr, "  %s -d|-delete file [start-end] [-m pattern] [--dry-run]\n", prog);
+    fprintf(stderr, "  %s -r|-replace file [start-end] \"text\" [-m pattern] [-q] [--dry-run]\n", prog);
     fprintf(stderr, "  %s -s file pattern replacement [-e pat repl] [-m pattern] [-F delim N val] [-E] [-g]\n", prog);
-    fprintf(stderr, "  %s -l [file] [--persist]          (list backups)\n", prog);
-    fprintf(stderr, "  %s -lsbak [file] [N] [--persist]  (list with date/user)\n", prog);
-    fprintf(stderr, "  %s -rmbak|-z [file] [--persist]   (remove backups)\n", prog);
-    fprintf(stderr, "  %s --persist file                  (move repo from /tmp to ~/.local/share/iv/)\n", prog);
-    fprintf(stderr, "  %s --unpersist file                (move repo from ~/.local/share/iv/ to /tmp)\n", prog);
-    fprintf(stderr, "\nGlobal options: --dry-run --no-backup --no-numbers -g -E -q --stdout --json\n");
-    fprintf(stderr, "-m pattern  -F delim N  --persist for backup ops uses the persisted repo.\n");
+    fprintf(stderr, "\nGlobal options: --dry-run --no-numbers -g -E -q --stdout --json\n");
+    fprintf(stderr, "Backup (off unless asked): -b  --backup[=none|numbered|existing|simple]\n");
+    fprintf(stderr, "                           -S, --suffix=SUFFIX\n");
+    fprintf(stderr, "-m pattern  -F delim N\n");
     fprintf(stderr, "Text: \"-\" = stdin, existing path = file content, anything else = literal.\n");
-    fprintf(stderr, "Ranges: 1-5, -3--1, -5-, 2-. Ephemeral backups in /tmp/iv_<user>/.\n");
+    fprintf(stderr, "Ranges: 1-5, -3--1, -5-, 2-.\n");
 }
 
-static void parse_opts(int argc, char *argv[], IvOpts *opts)
+static int parse_opts(int argc, char *argv[], IvOpts *opts)
 {
     *opts = (IvOpts){0};
     for (int i = 0; i < argc; i++)
     {
         if (strcmp(argv[i], "--dry-run") == 0)
             opts->dry_run = 1;
-        else if (strcmp(argv[i], "--no-backup") == 0)
-            opts->no_backup = 1;
+        else if (strcmp(argv[i], "-b") == 0)
+            opts->backup = IV_BACKUP_EXISTING;
+        else if (strcmp(argv[i], "--backup") == 0)
+        {
+            int t = iv_backup_from_env();
+
+            if (t < 0)
+            {
+                fprintf(stderr, "iv: invalid VERSION_CONTROL\n");
+                return -1;
+            }
+            opts->backup = t;
+        }
+        else if (strncmp(argv[i], "--backup=", 9) == 0)
+        {
+            int t = iv_parse_backup_method(argv[i] + 9);
+
+            if (t < 0)
+            {
+                fprintf(stderr, "iv: invalid --backup method\n");
+                return -1;
+            }
+            opts->backup = t;
+        }
+        else if (strcmp(argv[i], "-S") == 0 && i + 1 < argc)
+        {
+            opts->backup_suffix = argv[++i];
+            if (opts->backup == IV_BACKUP_NONE)
+            {
+                int t = iv_backup_from_env();
+
+                opts->backup = (t < 0) ? IV_BACKUP_EXISTING : t;
+            }
+        }
+        else if (strcmp(argv[i], "--suffix") == 0 && i + 1 < argc)
+        {
+            opts->backup_suffix = argv[++i];
+            if (opts->backup == IV_BACKUP_NONE)
+            {
+                int t = iv_backup_from_env();
+
+                opts->backup = (t < 0) ? IV_BACKUP_EXISTING : t;
+            }
+        }
+        else if (strncmp(argv[i], "--suffix=", 9) == 0)
+        {
+            opts->backup_suffix = argv[i] + 9;
+            if (opts->backup == IV_BACKUP_NONE)
+            {
+                int t = iv_backup_from_env();
+
+                opts->backup = (t < 0) ? IV_BACKUP_EXISTING : t;
+            }
+        }
         else if (strcmp(argv[i], "--no-numbers") == 0)
             opts->no_numbers = 1;
         else if (strcmp(argv[i], "-g") == 0)
@@ -58,12 +106,6 @@ static void parse_opts(int argc, char *argv[], IvOpts *opts)
             opts->to_stdout = 1;
         else if (strcmp(argv[i], "--json") == 0)
             opts->json = 1;
-        else if (strcmp(argv[i], "--persist") == 0 ||
-                 strcmp(argv[i], "-persistence") == 0)
-            opts->persist = 1;
-        else if (strcmp(argv[i], "--unpersist") == 0 ||
-                 strcmp(argv[i], "-unpersist") == 0)
-            opts->unpersist = 1;
         else if (strcmp(argv[i], "-m") == 0 && i + 1 < argc)
             opts->multimatch = argv[++i];
         else if (strcmp(argv[i], "-F") == 0 && i + 2 < argc)
@@ -73,13 +115,19 @@ static void parse_opts(int argc, char *argv[], IvOpts *opts)
             i += 2;
         }
     }
+    return 0;
 }
 
 /* Returns 1 if argv[i] is a flag (i.e., not a positional argument). */
 static int is_flag(const char *s)
 {
     return strcmp(s, "--dry-run") == 0 ||
-           strcmp(s, "--no-backup") == 0 ||
+           strcmp(s, "-b") == 0 ||
+           strcmp(s, "--backup") == 0 ||
+           strncmp(s, "--backup=", 9) == 0 ||
+           strcmp(s, "-S") == 0 ||
+           strcmp(s, "--suffix") == 0 ||
+           strncmp(s, "--suffix=", 9) == 0 ||
            strcmp(s, "--no-numbers") == 0 ||
            strcmp(s, "-g") == 0 ||
            strcmp(s, "-E") == 0 ||
@@ -87,13 +135,6 @@ static int is_flag(const char *s)
            strcmp(s, "-q") == 0 ||
            strcmp(s, "--stdout") == 0 ||
            strcmp(s, "--json") == 0 ||
-           strcmp(s, "--persist") == 0 ||
-           strcmp(s, "-persistence") == 0 ||
-           strcmp(s, "--unpersist") == 0 ||
-           strcmp(s, "-unpersist") == 0 ||
-           strcmp(s, "-z") == 0 ||
-           strcmp(s, "-rmbak") == 0 ||
-           strcmp(s, "-u") == 0 ||
            strcmp(s, "-e") == 0 ||
            strcmp(s, "-m") == 0 ||
            strcmp(s, "-F") == 0;
@@ -132,6 +173,11 @@ static int *collect_args(int argc, char *argv[], int start, int *n)
         if (strcmp(argv[i], "-e") == 0)
         {
             i += 2;
+            continue;
+        }
+        if (strcmp(argv[i], "-S") == 0 || strcmp(argv[i], "--suffix") == 0)
+        {
+            i++;
             continue;
         }
         if (is_flag(argv[i]))
@@ -301,7 +347,6 @@ struct SubstCommit
     int npairs;
     const IvOpts *opts;
     int *nrepl;
-    int persisted;
 };
 
 struct FieldCommit
@@ -326,7 +371,7 @@ static int subst_commit_write(FILE *out, void *v)
         return -1;
     if (c->nrepl && *c->nrepl == 0)
         return 1;
-    if (!c->opts->no_backup && backup_file(c->path, c->persisted) != 0)
+    if (iv_backup_file(c->path, c->opts) != 0)
     {
         fprintf(stderr, "iv: backup failed, aborting (original unchanged)\n");
         return -1;
@@ -355,8 +400,7 @@ struct PlanCommit
     const char *text;
     const char *filter;
     int use_regex;
-    int persisted;
-    int no_backup;
+    const IvOpts *opts;
 };
 
 static int plan_commit_write(FILE *out, void *v)
@@ -378,7 +422,7 @@ static int plan_commit_write(FILE *out, void *v)
     fclose(in);
     if (rc != 0)
         return -1;
-    if (!c->no_backup && backup_file(c->path, c->persisted) != 0)
+    if (iv_backup_file(c->path, c->opts) != 0)
     {
         fprintf(stderr, "iv: backup failed, aborting (original unchanged)\n");
         return -1;
@@ -388,6 +432,9 @@ static int plan_commit_write(FILE *out, void *v)
 
 int main(int argc, char *argv[])
 {
+    setlocale(LC_ALL, "C");
+    iv_init_stdio();
+
     if (argc < 2)
     {
         usage(argv[0]);
@@ -404,110 +451,17 @@ int main(int argc, char *argv[])
     if (strcmp(flag, "-V") == 0 || strcmp(flag, "--version") == 0)
     {
         printf("iv %s\n", IV_VERSION);
+        printf("Copyright (C) 2026 Iván Ezequiel Rodriguez\n");
         printf("License GPLv3+: GNU GPL version 3 or later <https://gnu.org/licenses/gpl.html>.\n");
         printf("This is free software: you are free to change and redistribute it.\n");
-        printf("There is NO WARRANTY, to the extent permitted by law.\n\n");
-        printf("Written by Iván Ezequiel Rodriguez.\n");
+        printf("There is NO WARRANTY, to the extent permitted by law.\n");
+        printf("\nWritten by Iván Ezequiel Rodriguez.\n");
         return 0;
     }
 
     IvOpts opts;
-    parse_opts(argc, argv, &opts);
-    int persisted = opts.persist; /* convenience */
-
-    /* ── --persist / --unpersist: move backup repo ── */
-    if (strcmp(flag, "--persist") == 0 || strcmp(flag, "--unpersist") == 0 ||
-        strcmp(flag, "-persistence") == 0 || strcmp(flag, "-unpersist") == 0)
-    {
-        int to_persist = (strcmp(flag, "--persist") == 0 || strcmp(flag, "-persistence") == 0) ? 1 : 0;
-        int fi = next_arg(argc, argv, 2);
-        if (fi < 0)
-        {
-            fprintf(stderr, "iv: %s needs a file\n", flag);
-            return 1;
-        }
-        const char *filename = argv[fi];
-        if (transfer_backup_repo(filename, to_persist) == 0)
-        {
-            fprintf(stderr, "iv: repo for '%s' %s\n", filename,
-                    to_persist ? "persisted in ~/.local/share/iv/"
-                               : "moved back to /tmp");
-            return 0;
-        }
-        fprintf(stderr, "iv: error moving repo for '%s'\n", filename);
+    if (parse_opts(argc, argv, &opts) != 0)
         return 1;
-    }
-
-    /* ── -l list backups ── */
-    if (strcmp(flag, "-l") == 0 || strcmp(flag, "-lb") == 0)
-    {
-        int fi = next_arg(argc, argv, 2);
-        const char *file = (fi >= 0) ? argv[fi] : NULL;
-        if (persisted)
-        {
-            list_backups(file, 1);
-        }
-        else
-        {
-            fprintf(stderr, "-- Ephemeral backups (/tmp) --\n");
-            list_backups(file, 0);
-            fprintf(stderr, "\n-- Persisted backups (~/.local/share/iv) --\n");
-            list_backups(file, 1);
-        }
-        return 0;
-    }
-
-    /* ── -z / -rmbak remove backups ── */
-    if (strcmp(flag, "-z") == 0 || strcmp(flag, "-rmbak") == 0)
-    {
-        int fi = next_arg(argc, argv, 2);
-        clean_backups(fi >= 0 ? argv[fi] : NULL, persisted);
-        return 0;
-    }
-
-    /* ── -lsbak ── */
-    if (strcmp(flag, "-lsbak") == 0)
-    {
-        int fi = next_arg(argc, argv, 2);
-        if (fi < 0)
-        {
-            if (persisted)
-            {
-                list_backups_with_meta(NULL, 1);
-            }
-            else
-            {
-                fprintf(stderr, "-- Ephemeral backups (/tmp) --\n");
-                list_backups_with_meta(NULL, 0);
-                fprintf(stderr, "\n-- Persisted backups (~/.local/share/iv) --\n");
-                list_backups_with_meta(NULL, 1);
-            }
-            return 0;
-        }
-        const char *file = argv[fi];
-        int fi2 = next_arg(argc, argv, fi + 1);
-        if (fi2 >= 0 && argv[fi2][0] >= '1' && argv[fi2][0] <= '9')
-        {
-            int slot = atoi(argv[fi2]);
-            if (persisted)
-                return show_backup_slot(file, 1, slot) == 0 ? 0 : 1;
-            if (show_backup_slot(file, 0, slot) == 0)
-                return 0;
-            return show_backup_slot(file, 1, slot) == 0 ? 0 : 1;
-        }
-        if (persisted)
-        {
-            list_backups_with_meta(file, 1);
-        }
-        else
-        {
-            fprintf(stderr, "-- Ephemeral backups (/tmp) --\n");
-            list_backups_with_meta(file, 0);
-            fprintf(stderr, "\n-- Persisted backups (~/.local/share/iv) --\n");
-            list_backups_with_meta(file, 1);
-        }
-        return 0;
-    }
 
     if (argc < 3)
     {
@@ -528,96 +482,6 @@ int main(int argc, char *argv[])
         filename = argv[2];
     }
 
-    /* ── -diff ── */
-    if (strcmp(flag, "-diff") == 0)
-    {
-        int unified = 0, diff_slot = 1, fi = -1;
-        for (int i = 2; i < argc; i++)
-        {
-            if (strcmp(argv[i], "-u") == 0)
-            {
-                unified = 1;
-                continue;
-            }
-            if (is_flag(argv[i]))
-                continue;
-            if (argv[i][0] >= '1' && argv[i][0] <= '9' && fi < 0)
-            {
-                int n = atoi(argv[i]);
-                if (n >= 1)
-                {
-                    diff_slot = n;
-                    continue;
-                }
-            }
-            fi = i;
-            filename = argv[i];
-        }
-        if (fi < 0)
-        {
-            fprintf(stderr, "iv: -diff needs a file\n");
-            return 1;
-        }
-        char bakname[PATH_MAX];
-        get_backup_path_n(filename, persisted, diff_slot, bakname, sizeof(bakname));
-        FILE *bak = fopen(bakname, "r");
-        if (!bak)
-        {
-            fprintf(stderr, "iv: no backup %d found for %s\n", diff_slot, filename);
-            return 0;
-        }
-        fclose(bak);
-        if (unified)
-        {
-            char cmd[PATH_MAX * 2 + 32];
-            snprintf(cmd, sizeof(cmd), "diff -u \"%s\" \"%s\"", bakname, filename);
-            FILE *p = popen(cmd, "r");
-            if (p)
-            {
-                char buf[4096];
-                while (fgets(buf, sizeof(buf), p))
-                    fputs(buf, stdout);
-                pclose(p);
-            }
-        }
-        else
-        {
-            fprintf(stdout, "--- %s (backup %d)\n", bakname, diff_slot);
-            stream_file_with_numbers(bakname);
-            fprintf(stdout, "\n--- %s (current)\n", filename);
-            stream_file_with_numbers(filename);
-        }
-        return 0;
-    }
-
-    /* ── -u undo ── */
-    if (strcmp(flag, "-u") == 0)
-    {
-        int slot = 1;
-        if (argc >= 4 && argv[3][0] >= '1' && argv[3][0] <= '9')
-        {
-            int n = atoi(argv[3]);
-            if (n >= 1)
-                slot = n;
-        }
-        char bakname[PATH_MAX];
-        get_backup_path_n(filename, persisted, slot, bakname, sizeof(bakname));
-        {
-            struct stat st;
-            if (stat(bakname, &st) != 0)
-            {
-                fprintf(stderr, "iv: no backup %d found (%s)\n", slot, bakname);
-                return 1;
-            }
-        }
-        if (iv_restore_file(bakname, filename) != 0)
-        {
-            fprintf(stderr, "iv: undo failed (original unchanged)\n");
-            return 1;
-        }
-        return 0;
-    }
-
     if (strcmp(filename, "-") == 0)
         opts.to_stdout = 1;
 
@@ -635,6 +499,20 @@ int main(int argc, char *argv[])
             src = stdin;
         else
         {
+            /* Edits must not open FIFOs/devices (fopen would block or clobber). */
+            if (strcmp(flag, "-s") == 0 ||
+                strcmp(flag, "-d") == 0 || strcmp(flag, "-delete") == 0 ||
+                strcmp(flag, "-r") == 0 || strcmp(flag, "-replace") == 0)
+            {
+                struct stat st;
+
+                if (lstat(filename, &st) == 0 && !S_ISLNK(st.st_mode) &&
+                    !S_ISREG(st.st_mode))
+                {
+                    fprintf(stderr, "iv: not a regular file: %s\n", filename);
+                    return 1;
+                }
+            }
             src = fopen(filename, "r");
             if (!src)
             {
@@ -709,8 +587,7 @@ int main(int argc, char *argv[])
 
             memset(&job, 0, sizeof(job));
             job.path = filename;
-            job.persisted = persisted;
-            job.no_backup = opts.no_backup;
+            job.opts = &opts;
             job.use_regex = opts.use_regex;
             job.filter = opts.multimatch;
             job.op = is_repl ? IV_STREAM_REPLACE : IV_STREAM_DELETE;
@@ -900,7 +777,7 @@ int main(int argc, char *argv[])
                 {
                     struct FieldCommit fc = {filename, job.delim, job.field_num,
                                              job.field_val};
-                    if (!opts.no_backup && backup_file(filename, persisted) != 0)
+                    if (iv_backup_file(filename, &opts) != 0)
                     {
                         fprintf(stderr, "iv: backup failed, aborting (original unchanged)\n");
                         free(job.val_owned);
@@ -913,12 +790,12 @@ int main(int argc, char *argv[])
                 else
                 {
                     struct SubstCommit sc = {filename, job.pairs, job.npairs,
-                                             &opts, &job.nrepl, persisted};
+                                             &opts, &job.nrepl};
                     rc = iv_commit_stream(filename, subst_commit_write, &sc);
                 }
             }
 
-            if (job.nrepl > 0 && !job.fields)
+            if (job.nrepl > 0 && !job.fields && !iv_stdout_closed())
                 fprintf(stderr, "Replaced %d occurrence(s)\n", job.nrepl);
             free(job.val_owned);
             if (src && src != stdin)

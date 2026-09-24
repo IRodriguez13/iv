@@ -14,23 +14,27 @@
 
 #define INITIAL_LINES 256
 
-/* Rotating backup cap: slot 1 is newest. Older than this are dropped. */
-#define IV_BACKUP_SLOTS 10
+#define IV_VERSION "0.11.1"
 
-#define IV_VERSION "0.11.0"
+/* GNU Coreutils --backup methods (cp/mv/install). Default is none. */
+enum {
+    IV_BACKUP_NONE = 0,
+    IV_BACKUP_SIMPLE,
+    IV_BACKUP_NUMBERED,
+    IV_BACKUP_EXISTING
+};
 
 /* Options (set by main from argv) */
 typedef struct {
     int dry_run;
-    int no_backup;
+    int backup;             /* IV_BACKUP_*; none unless -b / --backup / -S */
+    const char *backup_suffix; /* -S / --suffix; else SIMPLE_BACKUP_SUFFIX or ~ */
     int no_numbers;
     int global_replace;     /* -g: replace all matches per line */
     int use_regex;          /* -E: regex for substitute and -m / -n / -nv */
     int quiet;              /* -q: suppress tee-like output */
     int to_stdout;          /* --stdout: write result to stdout, do not modify file */
     int json;               /* --json: structured output for -n */
-    int persist;            /* --persist: move repo from /tmp to ~/.local/share/iv/ */
-    int unpersist;          /* --unpersist: move repo from ~/.local/share/iv/ to /tmp */
     const char *multimatch; /* -m: apply only to matching lines */
     char field_delim;       /* -F: field delimiter (byte, not CSV quoting) */
     int field_num;          /* -F: field number (1-based) */
@@ -79,40 +83,12 @@ int iv_stream_delete_match(FILE *in, FILE *out, const char *filter,
 int iv_stream_replace_match(FILE *in, FILE *out, const char *filter,
                             int use_regex, const char *text);
 
-/* Backup root directory depending on persistence:
- *   persisted → $XDG_DATA_HOME/iv  or  ~/.local/share/iv
- *   ephemeral → $IV_BACKUP_DIR     or  /tmp/iv_<user>
- * The returned string is static or from the environment; do not free it. */
-const char *get_backup_root(int persisted);
-
-/* Build the per-file subdirectory inside the backup root.
- * Format: <repo_name>%<sanitized_path>
- * E.g.: /home/ivan/myproject/src/main.c → "myproject%src%main.c"
- * buf should be at least 512 bytes. */
-void get_backup_subdir(const char *filename, char *buf, size_t size);
-
-/* Full path to the backup directory for filename.
- * If persisted=1 uses ~/.local/share/iv/, otherwise uses /tmp/iv_<user>/
- * Creates the directory if it does not exist. */
-void get_backup_dir_for_file(const char *filename, int persisted,
-                             char *buf, size_t size);
-
-/* Full path to backup slot N for filename. */
-void get_backup_path_n(const char *filename, int persisted, int n,
-                       char *buf, size_t size);
-
-/* Full path to the .meta for slot N. */
-void get_backup_meta_path(const char *filename, int persisted, int n,
-                          char *buf, size_t size);
-
-/* Create a rotating backup (slot 1 newest, drop past IV_BACKUP_SLOTS).
- * Returns 0 on success or if the source does not exist; -1 on I/O error. */
-int backup_file(const char *filename, int persisted);
-
-/* Move a file's backup directory from /tmp to
- * ~/.local/share/iv/ (persist=1) or the other way around (persist=0).
- * Returns 0 on success, -1 on error. */
-int transfer_backup_repo(const char *filename, int to_persist);
+/* GNU --backup method names (unique abbreviations). -1 if unknown/ambiguous. */
+int iv_parse_backup_method(const char *s);
+/* VERSION_CONTROL, or existing if unset. -1 if VERSION_CONTROL is invalid. */
+int iv_backup_from_env(void);
+/* Copy path to a GNU backup name. No-op if backup is none or path is missing. */
+int iv_backup_file(const char *path, const IvOpts *opts);
 
 void write_with_escapes(FILE *f, const char *text);
 
@@ -149,7 +125,12 @@ int iv_stream_fields(FILE *in, FILE *out, char delim, int field_num,
 int iv_commit_stream(const char *path, IvWriteFn write_fn, void *ctx);
 int iv_commit_lines(const char *path, char *lines[], int count);
 int iv_copy_file(const char *src, const char *dst);
-int iv_restore_file(const char *src, const char *dst);
+void iv_init_stdio(void);
+void iv_enlarge_buf(FILE *f);
+int iv_fputs(FILE *out, const char *s);
+int iv_fwrite(FILE *out, const void *p, size_t n);
+int iv_out_status(FILE *out);
+int iv_stdout_closed(void);
 int iv_check_stream(FILE *f);
 
 int write_lines_to_file(const char *filename, char *lines[], int count);
@@ -175,15 +156,5 @@ int  stream_find_line_numbers(FILE *f, const char *pattern, int json,
 int  stream_find_matching_lines(FILE *f, const char *pattern, int no_numbers,
                                 int use_regex);
 int  stream_count_lines(FILE *f);
-
-/* List backups in the given root. filter=NULL: all; filter="file": only that one. */
-void list_backups(const char *filter, int persisted);
-void list_backups_with_meta(const char *filter, int persisted);
-
-/* Show metadata (stderr) and content (stdout) of slot N. */
-int show_backup_slot(const char *filename, int persisted, int n);
-
-/* Remove backups. filter=NULL: all; filter="file": only those for that file. */
-void clean_backups(const char *filter, int persisted);
 
 #endif

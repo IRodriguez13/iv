@@ -134,6 +134,15 @@ int stream_file_with_numbers(const char *path)
     return rc;
 }
 
+static int emit_view(const char *line, int n, int no_numbers)
+{
+    if (no_numbers)
+        return iv_fputs(stdout, line);
+    if (printf("%4d | %s", n, line) >= 0)
+        return 0;
+    return (iv_out_status(stdout) == 1) ? 1 : -1;
+}
+
 int stream_show_file(FILE *f, int no_numbers)
 {
     char *line = NULL;
@@ -142,11 +151,20 @@ int stream_show_file(FILE *f, int no_numbers)
 
     while (getline(&line, &cap, f) != -1)
     {
+        int pr;
+
         n++;
-        if (no_numbers)
-            fputs(line, stdout);
-        else
-            printf("%4d | %s", n, line);
+        pr = emit_view(line, n, no_numbers);
+        if (pr > 0)
+        {
+            free(line);
+            return 0;
+        }
+        if (pr < 0)
+        {
+            free(line);
+            return -1;
+        }
     }
     free(line);
     return ferror(f) ? -1 : 0;
@@ -167,10 +185,20 @@ int stream_show_range(FILE *f, int start, int end, int no_numbers)
             continue;
         if (n > end)
             break;
-        if (no_numbers)
-            fputs(line, stdout);
-        else
-            printf("%4d | %s", n, line);
+        {
+            int pr = emit_view(line, n, no_numbers);
+
+            if (pr > 0)
+            {
+                free(line);
+                return 0;
+            }
+            if (pr < 0)
+            {
+                free(line);
+                return -1;
+            }
+        }
     }
     free(line);
     return ferror(f) ? -1 : 0;
@@ -237,8 +265,20 @@ int stream_find_line_numbers(FILE *f, const char *pattern, int json,
             printf("%d", n);
             first = 0;
         }
-        else
-            printf("%d\n", n);
+        else if (printf("%d\n", n) < 0)
+        {
+            if (iv_out_status(stdout) == 1)
+            {
+                free(line);
+                if (rp)
+                    regfree(rp);
+                return 0;
+            }
+            free(line);
+            if (rp)
+                regfree(rp);
+            return -1;
+        }
     }
     if (json)
         printf("]}\n");
@@ -273,10 +313,24 @@ int stream_find_matching_lines(FILE *f, const char *pattern, int no_numbers,
         n++;
         if (!match_pat(line, pattern, rp))
             continue;
-        if (no_numbers)
-            fputs(line, stdout);
-        else
-            printf("%4d | %s", n, line);
+        {
+            int pr = emit_view(line, n, no_numbers);
+
+            if (pr > 0)
+            {
+                free(line);
+                if (rp)
+                    regfree(rp);
+                return 0;
+            }
+            if (pr < 0)
+            {
+                free(line);
+                if (rp)
+                    regfree(rp);
+                return -1;
+            }
+        }
     }
     free(line);
     if (rp)

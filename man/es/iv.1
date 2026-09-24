@@ -1,4 +1,4 @@
-.TH IV 1 "Septiembre 2026" "iv 0.11.0" "Comandos de usuario"
+.TH IV 1 "Septiembre 2026" "iv 0.11.1" "Comandos de usuario"
 .SH NOMBRE
 iv \- editor de texto orientado a líneas para scripts y tuberías
 .SH SINOPSIS
@@ -30,48 +30,12 @@ iv \- editor de texto orientado a líneas para scripts y tuberías
 .IR patrón
 .PP
 .B iv
-.B \-u
-.IR archivo
-.RI [ N ]
-.PP
-.B iv
-.B \-diff
-.RI [ \-u ]
-.RI [ N ]
-.IR archivo
-.PP
-.B iv
-.B \-l
-.RI [ archivo ]
-.RI [ \-\-persist ]
-.PP
-.B iv
-.B \-lsbak
-.RI [ archivo ]
-.RI [ N ]
-.RI [ \-\-persist ]
-.PP
-.B iv
-.BR "\-z," " \-rmbak"
-.RI [ archivo ]
-.RI [ \-\-persist ]
-.PP
-.B iv
-.BR "\-\-persist," " \-persistence"
-.IR archivo
-.PP
-.B iv
-.BR "\-\-unpersist," " \-unpersist"
-.IR archivo
-.PP
-.B iv
 .BR "\-i," " \-\-insert"
 .IR archivo
 .RI [ inicio\-fin ]
 .IR "texto"
 .RI [ \-q ]
 .RI [ \-\-dry\-run ]
-.RI [ \-\-no\-backup ]
 .PP
 .B iv
 .B \-a
@@ -102,7 +66,6 @@ iv \- editor de texto orientado a líneas para scripts y tuberías
 .RI [ \-m
 .IR patrón ]
 .RI [ \-\-dry\-run ]
-.RI [ \-\-no\-backup ]
 .PP
 .B iv
 .BR "\-r," " \-\-replace"
@@ -113,7 +76,6 @@ iv \- editor de texto orientado a líneas para scripts y tuberías
 .IR patrón ]
 .RI [ \-q ]
 .RI [ \-\-dry\-run ]
-.RI [ \-\-no\-backup ]
 .PP
 .B iv
 .B \-s
@@ -133,7 +95,6 @@ iv \- editor de texto orientado a líneas para scripts y tuberías
 .RI [ \-g ]
 .RI [ \-q ]
 .RI [ \-\-dry\-run ]
-.RI [ \-\-no\-backup ]
 .PP
 .B iv
 .BR "\-h," " \-\-help"
@@ -142,9 +103,15 @@ iv \- editor de texto orientado a líneas para scripts y tuberías
 .BR "\-V," " \-\-version"
 .SH DESCRIPCIÓN
 .B iv
-es un editor de texto orientado a líneas para la línea de comandos, inspirado
-en ed/sed. Diseñado para composición con tuberías y scripts. Sin dependencias
-externas.
+es un editor de texto orientado a líneas para la línea de comandos.
+En tiempo de ejecución depende solo de libc. Las ediciones se componen
+con tuberías.
+.B \-\-help ,
+.B \-\-version
+y los diagnósticos están en inglés. Este manual se lee con
+.BR "man \-L es iv" .
+Las distros traducen el manual, no
+.BR \-\-version .
 .PP
 Los argumentos de texto admiten tres formas:
 .RS
@@ -178,30 +145,6 @@ emite {"lines":[1,5,7]} para integración con jq/Python.
 Imprime las líneas que coinciden con \fIpatrón\fR.
 Por defecto incluye números de línea; use \fB\-\-no\-numbers\fR para solo el contenido.
 .TP
-.B \-u
-Deshace: restaura el archivo desde el slot de backup
-.IR N
-(por defecto 1). Hasta 10 backups numerados por archivo.
-.TP
-.B \-diff
-Compara el backup
-.IR N
-(por defecto 1) con el archivo actual. Con
-.B \-u
-usa formato diff unificado.
-.TP
-.B \-l
-Lista backups (solo ruta y tamaño). \fIarchivo\fR opcional filtra por nombre.
-Por defecto lista repositorio efímero y persistido.
-Con \fB\-\-persist\fR lista solo el repositorio persistido.
-.TP
-.B \-lsbak
-Lista backups con metadatos (fecha y usuario). Con \fIN\fR muestra contenido del slot.
-Con \fB\-\-persist\fR opera solo sobre backups persistidos.
-.TP
-.B \-z
-.B \-rmbak
-Elimina backups. \fIarchivo\fR opcional limita al archivo indicado.
 .SH COMANDOS DE EDICIÓN
 .TP
 .B \-i
@@ -236,7 +179,9 @@ añade más reemplazos (como sed \-e).
 .B \-F
 \fIdelim\fR \fIN\fR \fIvalor\fR reemplaza el campo N (texto delimitado, no CSV con comillas).
 .B \-E
-habilita ERE POSIX. El reemplazo admite \fB\\1\fR–\fB\\9\fR y \fB&\fR.
+.B \-\-regex
+habilitan ERE POSIX. El reemplazo admite \fB\\1\fR–\fB\\9\fR y \fB&\fR.
+Un patrón vacío se rechaza.
 \fB\-g\fR reemplaza todas las coincidencias por línea.
 .B \-m
 usa el mismo lenguaje que la sustitución (literal, o ERE con \fB\-E\fR).
@@ -245,17 +190,49 @@ usa el mismo lenguaje que la sustitución (literal, o ERE con \fB\-E\fR).
 .B \-\-dry\-run
 Muestra qué se haría sin modificar archivos.
 .TP
-.B \-\-no\-backup
-No crea backup antes de editar.
+.B \-b
+Backup GNU con método
+.BR existing .
+.TP
+.B \-\-backup[=METHOD]
+Backup GNU. Sin METHOD usa
+.B VERSION_CONTROL
+o
+.BR existing .
+Métodos (abreviaturas únicas):
+.BR none / off ,
+.BR numbered / t ,
+.BR existing / nil ,
+.BR simple / never .
+.TP
+.B \-S SUFFIX
+.B \-\-suffix=SUFFIX
+Sufijo del backup (por defecto
+.B SIMPLE_BACKUP_SUFFIX
+o
+.BR ~ ).
+También activa el backup.
 .TP
 .B \-\-no\-numbers
 Omite números de línea en salida \-v y \-va.
 .TP
 .B \-q
-Suprime salida tipo tee en \-i, \-a, \-r, \-p.
+Suprime la salida tipo tee (\-i, \-a, \-r, \-p, \-pi) y la línea
+.B Replaced N
+en
+.BR \-s .
 .TP
 .B \-\-stdout
 Escribe el resultado a stdout sin modificar el archivo.
+.TP
+.B \-E
+.B \-\-regex
+ERE POSIX para
+.BR \-s ,
+.BR \-m ,
+.B \-n
+y
+.BR \-nv .
 .SH RANGOS
 Base 1. Ejemplos:
 .RS
@@ -277,26 +254,65 @@ En texto de inserción/reemplazo: \fB\\n\fR nueva línea, \fB\\t\fR tabulador,
 \fB\\\\\fR barra invertida, \fB\\r\fR retorno de carro.
 .SH ENTORNO
 .TP
-.B IV_BACKUP_DIR
-Directorio raíz de backups efímeros. Por defecto: \fI/tmp/iv_<usuario>\fR.
+.B VERSION_CONTROL
+Método por defecto para
+.B \-\-backup
+y
+.B \-S
+si no se indica método.
+.TP
+.B SIMPLE_BACKUP_SUFFIX
+Sufijo de backup simple si no hay
+.BR \-S .
+Por defecto
+.BR ~ .
 .PP
-Los backups se guardan por archivo bajo un subdirectorio derivado del repositorio
-y la ruta del archivo. Cada slot es \fIN.bak\fR con \fIN.meta\fR opcional.
+Los backups quedan junto al archivo:
+.I archivo~
+o
+.IR archivo.~N~ .
+Restaurar con
+.BR mv (1);
+comparar con
+.BR diff (1).
 .SH ESCRITURA DE ARCHIVOS
-Las ediciones in-place escriben un temporal en el mismo directorio, hacen \fBfsync\fR y luego \fBrename\fR(2).
+.SH ESCRITURA DE ARCHIVOS
+Las ediciones in-place abren el directorio padre, crean un temporal exclusivo
+con \fBopenat\fR(2), hacen \fBfsync\fR, comprueban que el inode destino no cambió
+y luego \fBrenameat\fR(2).
 Si fallan, la ruta original no cambia.
+Un symlink colgante se rechaza; nunca se reemplaza por un archivo regular.
 Enlaces simbólicos: se reemplaza el referente; el inode del enlace se conserva.
 Enlaces duros: este pathname recibe un inode nuevo; los demás nombres conservan los bytes viejos.
-Se copian modo y owner; no se preservan xattrs ni ACL.
+Se copian modo y owner cuando el sistema lo permite; no se preservan xattrs ni ACL.
+\fBSIGINT\fR/\fBSIGTERM\fR/\fBSIGHUP\fR borran un temporal \fB.iv.*\fR residual.
+Si se pidió backup, es una copia del original tomada justo antes del rename.
+Esto no es un límite de seguridad frente a un directorio hostil y escribible.
+.SH BYTES Y LOCALE
+iv es orientado a bytes y corre en locale C.
+Una línea son bytes hasta \fB\\n\fR o EOF. Un NUL embebido es binario y se rechaza.
+Un patrón de sustitución vacío se rechaza.
+Directorios, FIFOs y dispositivos se rechazan; solo se editan archivos regulares.
+\fB\-F\fR toma un único byte delimitador (el primer byte del argumento).
+Las ERE POSIX (\fB\-E\fR) se compilan y emparejan como bytes en locale C.
+UTF-8 inválido se trata como bytes, no se repara.
+.SH TUBERÍAS
+\fBEPIPE\fR en stdout (el downstream cerró) es éxito: salida 0, sin diagnóstico.
 .SH ESTADO DE SALIDA
 .TP
 .B 0
-Éxito
+Éxito (incluido stdout cerrado por un filtro aguas abajo)
 .TP
 .B 1
 Error (archivo binario, rango inválido, fallo de escritura, uso incorrecto)
 .SH AUTOR
 Iván Ezequiel Rodriguez
+.SH COPYRIGHT
+Copyright \(co 2026 Iván Ezequiel Rodriguez.
+License GPLv3+: GNU GPL version 3 or later
+<https://gnu.org/licenses/gpl.html>.
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.
 .SH VÉASE TAMBIÉN
 .BR ed (1),
 .BR sed (1),

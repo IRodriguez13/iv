@@ -12,8 +12,6 @@ _iv() {
 		'-wc:count lines'
 		'-n:line numbers matching pattern'
 		'-nv:lines matching pattern'
-		'-u:undo from backup'
-		'-diff:compare with backup'
 		'-i:insert text'
 		'-insert:insert text'
 		'-a:append text'
@@ -24,27 +22,22 @@ _iv() {
 		'-r:replace lines'
 		'-replace:replace lines'
 		'-s:search and replace'
-		'-l:list backups'
-		'-lsbak:list backups with metadata'
-		'-rmbak:remove backups'
-		'-z:remove backups'
-		'--persist:persist backup repo'
-		'--unpersist:move backups to /tmp'
 	)
 
 	_arguments -s -S \
 		'(-h --help)'{-h,--help}'[Show help]' \
 		'(-V --version)'{-V,--version}'[Show version]' \
 		'--dry-run[Show changes without writing]' \
-		'--no-backup[Skip backup before edit]' \
 		'--no-numbers[Omit line numbers in view output]' \
 		'-g[Replace all matches per line]' \
 		'(-E --regex)'{-E,--regex}'[Use regex in substitute]' \
 		'-q[Quiet tee output]' \
 		'--stdout[Write to stdout without modifying file]' \
 		'--json[JSON output for -n]' \
-		'--persist[Use persisted backup directory]' \
-		'--unpersist[Use ephemeral backup directory]' \
+		'-b[GNU backup (existing)]' \
+		'--backup=-[GNU backup method]:method:(none numbered existing simple)' \
+		'-S+[Backup suffix]:suffix:' \
+		'--suffix=-[Backup suffix]:suffix:' \
 		'-m+[Apply only to matching lines]:pattern:' \
 		'-F+[Replace delimiter-separated field N]:delimiter field value:' \
 		'-e+[Extra substitute pattern]:pattern replacement:' \
@@ -57,7 +50,7 @@ _iv() {
 			;;
 		args)
 			case $words[1] in
-				-v|-va|-wc|-n|-nv|-u|-diff|-i|-insert|-a|-p|-pi|-d|-delete|-r|-replace|-s|-l|-lsbak|-rmbak|-z|--persist|--unpersist)
+				-v|-va|-wc|-n|-nv|-i|-insert|-a|-p|-pi|-d|-delete|-r|-replace|-s)
 					_files
 					;;
 			esac

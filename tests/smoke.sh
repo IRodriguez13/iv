@@ -8,7 +8,6 @@ case "$BIN" in
 esac
 
 TMP="$(mktemp -d)"
-export IV_BACKUP_DIR="$TMP/backups"
 trap 'rm -rf "$TMP"' EXIT
 
 cd "$TMP"
@@ -18,19 +17,19 @@ printf 'a\nb\nc\n' > sample.txt
 [[ "$("$BIN" -wc sample.txt)" == "3" ]] || { echo "FAIL: -wc"; exit 1; }
 
 # append
-"$BIN" -a sample.txt "d" -q --no-backup
+"$BIN" -a sample.txt "d" -q
 [[ "$(tail -1 sample.txt)" == "d" ]] || { echo "FAIL: -a"; exit 1; }
 
 # replace range
-"$BIN" -r sample.txt 2 "B" -q --no-backup
+"$BIN" -r sample.txt 2 "B" -q
 [[ "$(sed -n '2p' sample.txt)" == "B" ]] || { echo "FAIL: -r"; exit 1; }
 
 # delete with -m
-"$BIN" -d sample.txt -m "B" -q --no-backup
+"$BIN" -d sample.txt -m "B" -q
 grep -q '^B$' sample.txt && { echo "FAIL: -d -m"; exit 1; }
 
 # substitute
-"$BIN" -s sample.txt c C -q --no-backup
+"$BIN" -s sample.txt c C -q
 grep -q '^C$' sample.txt || { echo "FAIL: -s"; exit 1; }
 
 # line range view
@@ -39,18 +38,18 @@ out="$("$BIN" -va 2-3 sample.txt --no-numbers)"
 
 # dry-run leaves file unchanged
 cp sample.txt before.txt
-"$BIN" -s sample.txt C Z --dry-run --no-backup -q
+"$BIN" -s sample.txt C Z --dry-run -q
 cmp -s before.txt sample.txt || { echo "FAIL: --dry-run"; exit 1; }
 
-# backup + undo
-printf 'one\n' > undo.txt
-"$BIN" -a undo.txt two -q
-"$BIN" -u undo.txt
-[[ "$(wc -l < undo.txt)" -eq 1 ]] || { echo "FAIL: -u"; exit 1; }
+# GNU -b simple backup next to the file
+printf 'one\n' > bak.txt
+"$BIN" -s bak.txt one TWO -q -b
+[[ "$(cat bak.txt)" == "TWO" ]] || { echo "FAIL: -b edit"; exit 1; }
+[[ "$(cat bak.txt~)" == "one" ]] || { echo "FAIL: -b backup"; exit 1; }
 
 # binary rejection
 printf 'ok\0bad' > bin.txt
-if "$BIN" -a bin.txt x --no-backup -q 2>/dev/null; then
+if "$BIN" -a bin.txt x -q 2>/dev/null; then
 	echo "FAIL: binary should be rejected"
 	exit 1
 fi

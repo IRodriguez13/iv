@@ -2,235 +2,223 @@
 
 > Documentación en español. English: [README.md](README.md)
 
-Editor de texto orientado a líneas para la línea de comandos. Sin dependencias externas. Pensado para composición con pipes y scripts.
+Editor de texto orientado a líneas para la línea de comandos. En tiempo de
+ejecución depende solo de libc. Las ediciones se componen con tuberías.
+
+## Licencia
+
+GPL-3.0-or-later. Véase [LICENSE](LICENSE).
+Copyright (C) 2026 Iván Ezequiel Rodriguez.
+
+`--help`, `--version` y los diagnósticos están en inglés. Las distros
+traducen el manual (`man -L es iv`), no `--version` (los scripts leen la
+primera línea).
 
 ## Compilación
 
 ```bash
 make
-make test
-make install          # default: ~/.local
+make test             # smoke + safety + completions + misc
+make test-musl        # la misma suite, binario musl-gcc
+make install          # PREFIX por defecto: ~/.local
 PREFIX=/usr/local make install
 ./install.sh
 make clean
 ```
 
-## Shell completions
+## Completions
 
-`make install` instala completions para **bash**, **zsh** y **fish**:
+Las instala `make install`:
 
-| Shell | Path (default `PREFIX=~/.local`) |
-|-------|----------------------------------|
+| Shell | Ruta (`PREFIX=~/.local`) |
+|-------|--------------------------|
 | bash  | `~/.local/share/bash-completion/completions/iv` |
 | zsh   | `~/.local/share/zsh/site-functions/_iv` |
 | fish  | `~/.local/share/fish/vendor_completions.d/iv.fish` |
 
-**zsh** — en `~/.zshrc` antes de `compinit`:
+zsh: añadir ese directorio a `fpath` antes de `compinit`. bash necesita el
+paquete `bash-completion`. fish carga `vendor_completions.d` solo.
 
-```bash
-fpath=(~/.local/share/zsh/site-functions $fpath)
-autoload -Uz compinit && compinit
-```
-
-**bash** — requiere el paquete `bash-completion`.  
-**fish** — carga automática desde `vendor_completions.d`.
-
-## Comandos
+## Invocación
 
 ### Visualización
 
-| Comando | Descripción |
-|---------|-------------|
-| `iv -v file` | Muestra el archivo completo con números de línea |
-| `iv -v file --no-numbers` | Muestra el archivo sin números de línea |
-| `iv -va start-end file` | Muestra el rango de líneas indicado |
-| `iv -wc file` | Cuenta las líneas del archivo |
-| `iv -n file "pattern"` | Números de línea donde aparece el patrón |
-| `iv -n file "pattern" --json` | Salida JSON: `{"lines":[1,5,7]}` (para jq, Python, etc.) |
-| `iv -nv file "pattern"` | Muestra las líneas donde aparece el patrón (tipo grep), con número de línea |
-| `iv -u file [N]` | Deshace: restaura desde el backup N (por defecto 1); slots 1..10 |
-| `iv -diff [-u] [N] file` | Compara backup N vs actual; `-u` = diff unificado |
-| `iv -l [file] [--persist]` | Lista backups: solo ruta y tamaño. Por defecto lista **efímeros + persistidos**; con `--persist` lista solo persistidos |
-| `iv -lsbak [file] [N] [--persist]` | Lista backups **con metadatos** (fecha y usuario). Por defecto lista **efímeros + persistidos**; con `--persist` lista solo persistidos. Si indicas N, muestra el contenido de ese slot |
-| `iv -rmbak [file] [--persist]` | Elimina backups (alias: `-z`). Sin archivo: todos; con archivo: solo los de ese archivo |
-| `iv --persist file` | Mueve el repo de backups de ese archivo desde `/tmp` a `~/.local/share/iv/` (alias: `-persistence`) |
-| `iv --unpersist file` | Mueve el repo de backups de ese archivo desde `~/.local/share/iv/` a `/tmp` (alias: `-unpersist`) |
-| `iv -V` / `iv --version` | Muestra versión |
+| Comando | Efecto |
+|---------|--------|
+| `iv -v archivo` | Imprime el archivo con números de línea |
+| `iv -v archivo --no-numbers` | Sin números |
+| `iv -va inicio-fin archivo` | Imprime un rango |
+| `iv -wc archivo` | Imprime el número de líneas |
+| `iv -n archivo patrón` | Números de línea que contienen *patrón* |
+| `iv -n archivo patrón --json` | `{"lines":[1,5,7]}` |
+| `iv -nv archivo patrón` | Líneas coincidentes (con número salvo `--no-numbers`) |
+| `iv -V`, `iv --version` | Versión y licencia |
+| `iv -h`, `iv --help` | Uso |
+
+`-n` / `-nv` buscan una subcadena literal salvo `-E` / `--regex` (ERE POSIX).
 
 ### Edición
 
-| Comando | Descripción |
-|---------|-------------|
-| `iv -i file "texto"` | Inserta texto al final (alias: `-insert`) |
-| `iv -i file start-end "texto"` | Inserta texto antes de la línea `start` |
-| `iv -a file "texto"` | Añade texto al final del archivo |
-| `iv -p file [file...] [range] content` | Parchea uno o más archivos; range opcional |
-| `iv -pi file [file...] line content` | Patch insert: inserta antes de la línea indicada (no reemplaza); la línea y el resto bajan |
-| `iv -d file [start-end]` | Elimina líneas (alias: `-delete`) |
-| `iv -d file -m "pattern"` | Elimina solo líneas que coinciden con el patrón |
-| `iv -r file [start-end] "texto"` | Reemplaza líneas (alias: `-replace`) |
-| `iv -r file -m "pattern" "texto"` | Reemplaza solo líneas que coinciden |
-| `iv -s file patrón reemplazo` | Sustituye (literal) |
-| `iv -s file patrón reemplazo -m "filter"` | Sustituye solo en líneas que contienen "filter" |
-| `iv -s file -F ',' 2 "X"` | Sustituye campo 2 (texto delimitado; no es CSV con comillas) |
-| `iv -s file patrón reemplazo -e pat2 repl2` | Múltiples sustituciones (como sed -e) |
-| `iv -s file patrón reemplazo -E` | Sustituye con regex (`\1`–`\9`, `&`) |
-| `iv -s file patrón reemplazo -g` | Sustituye todas las ocurrencias |
+| Comando | Efecto |
+|---------|--------|
+| `iv -i archivo texto` | Añade *texto* (alias `-insert`) |
+| `iv -i archivo inicio-fin texto` | Inserta *texto* antes de la línea *inicio* |
+| `iv -a archivo texto` | Añade *texto* |
+| `iv -p archivo [archivo...] [rango] contenido` | Parchea uno o más archivos; *rango* opcional |
+| `iv -pi archivo [archivo...] línea contenido` | Inserta *contenido* antes de *línea* (no reemplaza) |
+| `iv -d archivo [inicio-fin]` | Elimina líneas (alias `-delete`) |
+| `iv -d archivo -m patrón` | Elimina líneas que contienen *patrón* |
+| `iv -r archivo [inicio-fin] texto` | Reemplaza líneas (alias `-replace`) |
+| `iv -r archivo -m patrón texto` | Reemplaza las líneas coincidentes |
+| `iv -s archivo patrón reemplazo` | Sustitución literal (primera coincidencia por línea) |
+| `iv -s archivo patrón reemplazo -m filtro` | Solo en líneas que contienen *filtro* |
+| `iv -s archivo -F ',' 2 X` | Reemplaza el campo 2 (delimitador de un byte; no es CSV con comillas) |
+| `iv -s archivo pat repl -e pat2 repl2` | Pares adicionales (máximo 16) |
+| `iv -s archivo patrón reemplazo -E` | ERE POSIX; el reemplazo admite `\1`–`\9` y `&` |
+| `iv -s archivo patrón reemplazo -g` | Todas las coincidencias de la línea |
 
-### Opciones globales
+Un patrón de sustitución vacío se rechaza (salida 1). `-m` usa el mismo
+lenguaje que la sustitución (literal, o ERE con `-E`).
+
+### Opciones
 
 | Opción | Efecto |
 |--------|--------|
-| `--dry-run` | Muestra qué se haría sin modificar el archivo |
-| `--no-backup` | No crea archivo `.bak` antes de editar |
-| `--no-numbers` | Salida sin números de línea (solo con `-v` y `-va`) |
-| `-q` | Suprime la salida tipo tee en `-i`, `-a`, `-r`, `-p` |
-| `--stdout` | Escribe resultado a stdout sin modificar el archivo (composable en pipelines) |
+| `--dry-run` | Imprime el resultado; no escribe el archivo |
+| `-b` | Backup GNU, método `existing` |
+| `--backup[=METHOD]` | Backup GNU. Sin método: `$VERSION_CONTROL`, si no `existing` |
+| `-S SUFFIX`, `--suffix=SUFFIX` | Sufijo (también activa el backup). Por defecto `$SIMPLE_BACKUP_SUFFIX` o `~` |
+| `--no-numbers` | Sin números de línea (`-v`, `-va`, `-nv`) |
+| `-q` | Sin eco tipo tee (`-i`, `-a`, `-r`, `-p`, `-pi`); sin `Replaced N` en `-s` |
+| `--stdout` | Escribe el resultado a stdout; no modifica el archivo |
+| `-g` | Sustitución global |
+| `-E`, `--regex` | ERE POSIX en `-s`, `-m`, `-n`, `-nv` |
+| `--json` | Lista JSON de números (`-n`) |
 
 ## Rangos
 
-Los rangos son 1-based. Sintaxis:
+Base 1.
 
-| Formato | Significado |
-|--------|-------------|
-| `1-5` | Líneas 1 a 5 |
+| Forma | Significado |
+|-------|-------------|
+| `1-5` | Líneas 1–5 |
 | `5` | Línea 5 |
-| `-3` | Tercera línea contando desde el final |
+| `-3` | Tercera línea desde el final |
 | `-3--1` | Últimas tres líneas |
 | `-5-` | Últimas cinco líneas |
-| `2-` | Desde la línea 2 hasta el final |
+| `2-` | Desde la línea 2 hasta EOF |
 
-## Entrada: stdin o archivo
+## Argumentos de texto
 
-El argumento de texto en `-i`, `-a` y `-r` admite tres formas:
+En `-i`, `-a`, `-r` y el contenido de un parche:
 
-| Argumento | Comportamiento |
-|-----------|----------------|
-| `-` | Lee desde stdin |
-| Ruta a archivo existente | Lee el contenido del archivo |
-| Cualquier otro texto | Se usa como literal |
+| Argumento | Significado |
+|-----------|-------------|
+| `-` | Lee stdin |
+| Ruta de un archivo existente | Lee ese archivo |
+| Cualquier otra cadena | Texto literal |
 
-```bash
-echo "línea nueva" | iv -p file           # sin arg = stdin
-iv -p main.c snippet.c                    # append archivo
-iv -p main.c 5 snippet.c                   # insertar en línea 5
-iv -p main.c 1-3 plantilla.txt             # reemplazar líneas 1-3
-iv -pi main.c 1 "#include <foo.h>"         # insertar línea 1 sin reemplazar (baja el resto)
-iv -p f1.c f2.c snippet.c                 # parchear múltiples archivos
-iv -s file "[0-9]+" "X" -E                 # regex
-iv -s file "a" "b" -e "c" "d"             # múltiples sustituciones
-iv -nv file "TODO"                          # ver líneas que matchean (grep rápido)
-cat file | iv -s - "old" "new" --stdout    # pipeline sin modificar archivo
-```
-
-## Secuencias de escape
-
-En el texto de inserción o reemplazo se interpretan:
-
-| Secuencia | Carácter |
-|-----------|----------|
-| `\n` | Nueva línea |
-| `\t` | Tabulador |
-| `\\` | Barra invertida |
-| `\r` | Retorno de carro |
-
-Ejemplo:
+Un archivo cuyo nombre es `-` se pasa como `./-`.
 
 ```bash
-iv -i file "línea1\nlínea2\nlínea3"
+echo "línea nueva" | iv -p file
+iv -p main.c snippet.c
+iv -p main.c 5 snippet.c
+iv -p main.c 1-3 plantilla.txt
+iv -pi main.c 1 "#include <foo.h>"
+iv -s file "[0-9]+" "X" -E
+iv -s file a b -e c d
+cat file | iv -s - old new --stdout
+iv -s file a b --stdout | iv -s - b c --stdout
 ```
 
-## Comportamiento tipo tee
+## Escapes
 
-`-insert`, `-replace`, `-a`, `-p` y `-pi` escriben en stdout el texto añadido, de forma similar a `tee`. Usa `-q` para suprimir esta salida.
+En texto de inserción/reemplazo: `\n` nueva línea, `\t` tabulador, `\\`
+barra invertida, `\r` retorno de carro.
 
-## Pipelines con --stdout
+## Stdout
 
-Con `--stdout`, el resultado se escribe a stdout sin modificar el archivo. Permite encadenar operaciones:
+`-i`, `-a`, `-r`, `-p` y `-pi` escriben en stdout el texto añadido (como
+`tee`) salvo `-q`.
+
+`--stdout` escribe el archivo transformado a stdout. Si el lector cierra la
+tubería, iv sale 0 y no emite `Broken pipe`.
 
 ```bash
-iv -s file "a" "b" --stdout | iv -s - "b" "c" --stdout
+iv -s huge foo bar --stdout | head -n 1
 ```
 
-## Man pages
+## Backups
 
-| Idioma | Ruta |
-|--------|------|
-| Inglés (por defecto) | `iv.1` → `man iv` |
-| Español | `man/es/iv.1` → `man -L es iv` (si está instalada) |
+Las ediciones in-place no escriben backup salvo que se pida (`-b`,
+`--backup` o `-S`). Nombres y métodos son los de GNU Coreutils
+(`cp`, `mv`, `install`):
 
-## Estructura del código
+| Método | También | Efecto |
+|--------|---------|--------|
+| `none` | `off` | Sin backup, aunque se haya dado `-b` antes |
+| `numbered` | `t` | `archivo.~1~`, `archivo.~2~`, … |
+| `existing` | `nil` | Numerado si ya existe `archivo.~N~`; si no, simple |
+| `simple` | `never` | `archivo` + sufijo (`~` salvo `-S` / `SIMPLE_BACKUP_SUFFIX`) |
 
-```
-iv.h      — Declaraciones, constantes, IvOpts
-main.c    — Entrada, parseo de argumentos, dispatch
-view.c    — show_file, show_range, wc_lines, find_line_numbers, stream_file_with_numbers
-edit.c    — backup, apply_patch, substitute
-write.c   — commit transaccional (temp + fsync + rename)
-range.c   — parse_range
-```
+`-b` es `--backup=existing`. Se aceptan abreviaturas únicas.
+`--stdout` y `--dry-run` no escriben backup. Una sustitución sin
+coincidencias no sobrescribe el archivo y no escribe backup.
 
-## Formato de diff
+Restaurar y comparar con el filesystem: `mv archivo~ archivo`,
+`diff -u archivo~ archivo`.
 
-`iv -diff file` (o `iv -diff 2 file` para comparar con el backup 2) muestra antes y después con numeración de línea. Con `-u` usa formato unificado (compatible con `diff -u`):
+## Escritura in-place
 
-```
---- /tmp/iv_demo.c.bak (anterior)
-   1 | #include <stdio.h>
-   2 | int main(void) {
-   3 |     return 0;
-   4 | }
+leer → transformar → temporal exclusivo (`openat` + `O_EXCL` en el
+directorio padre) → `fsync` → misma inode → `renameat`.
 
---- demo.c (actual)
-   1 | // v1.0
-   2 | #include <stdio.h>
-   3 | int main(void) {
-   4 |     return 0;
-   5 | }
-```
+Si la edición falla, la ruta original no cambia. Si se pidió backup, es
+una copia del original tomada justo antes del rename.
 
-## Backup
+- Solo se editan archivos regulares. Directorios, FIFOs y dispositivos se
+  rechazan antes de abrir.
+- Un archivo con un byte NUL se rechaza.
+- Enlace simbólico: se reemplaza el referente; el inode del enlace se conserva.
+- Enlace simbólico colgante: se rechaza. iv no lo sustituye por un archivo
+  regular.
+- Enlace duro: este pathname recibe un inode nuevo; los demás nombres
+  conservan los bytes viejos.
+- Se copian modo y owner del referente cuando el sistema lo permite. No se
+  copian xattrs ni ACL.
+- `SIGINT` / `SIGTERM` / `SIGHUP` borran un temporal `.iv.*` residual.
+  `SIGKILL` puede dejar uno; la ruta original no se renombra.
+- Esto no es un límite de seguridad en un directorio escribible por un
+  tercero.
 
-- El repo de backups puede ser **efímero** (por defecto) o **persistido**.
-- Repo efímero: root en `/tmp/iv_<user>/` por defecto. Se puede cambiar con la variable de entorno `IV_BACKUP_DIR`.
-- El repo persistido: root en `$XDG_DATA_HOME/iv` o `~/.local/share/iv/`.
-- Los backups se guardan **por archivo** dentro de un subdirectorio derivado del nombre del repo y el path del archivo.
-- Cada slot se guarda como `N.bak` (por ejemplo `1.bak`, `2.bak`, ...), y el archivo `N.meta` (si existe) guarda `epoch` + `usuario`.
-- `iv -lsbak [file] [--persist]` lista backups mostrando fecha y usuario cuando hay `.meta`. Por defecto lista **efímeros + persistidos**; con `--persist` lista solo persistidos.
-- `iv -lsbak file N [--persist]` muestra el contenido del slot N y sus metadatos.
-- `iv -u file` restaura desde el backup 1; `iv -u file 2` desde el backup 2.
-- `iv -diff file` compara con el backup 1; `iv -diff 2 file` con el backup 2.
-- `iv -l [file] [--persist]` lista todos los backups; con `file` filtra por archivo. Por defecto lista **efímeros + persistidos**; con `--persist` lista solo persistidos.
-- `iv -rmbak` (o `-z`) elimina todos los backups (y sus `.meta`); `iv -rmbak file` solo los de ese archivo.
-- `iv --persist file` mueve el repo de backups de ese archivo al repo persistido (alias: `-persistence`); `iv --unpersist file` lo devuelve al efímero (alias: `-unpersist`).
+## Bytes
 
-## Seguridad
+iv fija `LC_ALL=C` y trata la entrada como bytes.
 
-Las ediciones in-place se confirman solo tras una escritura completa:
+- Una línea son bytes hasta `\n`, o hasta EOF si la última no tiene nueva línea.
+- `-F` usa el primer byte del argumento delimitador.
+- Las ERE POSIX (`-E`) se compilan y emparejan como bytes en locale C.
+- UTF-8 inválido es dato. No se repara.
 
-leer → transformar → temporal en el mismo filesystem → fsync → rename
+## Estado de salida
 
-Si la edición falla, la ruta original queda byte a byte igual. El backup se toma del original antes del rename.
-
-- **Archivos binarios**: iv rechaza editar archivos con bytes NUL.
-- **Symlinks**: se edita el referente; el inode del enlace se conserva.
-- **Hardlinks**: este pathname recibe un inode nuevo; los demás nombres conservan los bytes viejos.
-- **Metadatos**: se copian modo y owner del referente. No se preservan xattrs/ACL.
-- **`-`**: stdin es siempre un filtro (stdout); no crea un archivo llamado `-`.
-
-## Códigos de salida
-
-- `0`: éxito
-- `1`: error (archivo binario, rango inválido, uso incorrecto, etc.)
+| Estado | Significado |
+|--------|-------------|
+| 0 | Éxito, incluido `EPIPE` en stdout |
+| 1 | Error (uso, archivo inexistente, binario, rango inválido, escritura, patrón vacío, no regular) |
 
 ## Límites
 
-- Vista / `-s` / `-F` / `-d` / `-r`: streaming. Rangos relativos al EOF (`-3--1`) usan un ring de las últimas N líneas
-- Insertar / parche: el archivo se carga en líneas
-- Slots de backup: 1..10 (se descarta el más viejo)
-- Longitud de línea: sin límite (`getline` POSIX)
-- Pares `-e`: máximo 16
+- En stream: `-v`, `-va`, `-wc`, `-n`, `-nv`, `-s`, `-F`, `-d`, `-r`.
+  Los rangos relativos al final guardan un anillo de las últimas N líneas.
+- Cargados en líneas: `-i`, `-a`, `-p`, `-pi`.
+- La longitud de línea no tiene tope fijo (el lector crece desde 256 KiB).
+- Pares `-e`: 16.
 
-## Licencia
+## Manuales
 
-GPLv3+ — ver [LICENSE](LICENSE).
+| Idioma | Ruta |
+|--------|------|
+| Inglés | `iv.1` → `man iv` |
+| Español | `man/es/iv.1` → `man -L es iv` |

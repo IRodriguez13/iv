@@ -1,4 +1,4 @@
-.TH IV 1 "September 2026" "iv 0.11.0" "User Commands"
+.TH IV 1 "September 2026" "iv 0.11.1" "User Commands"
 .SH NAME
 iv \- line-oriented text editor for scripts and pipes
 .SH SYNOPSIS
@@ -30,48 +30,12 @@ iv \- line-oriented text editor for scripts and pipes
 .IR pattern
 .PP
 .B iv
-.B \-u
-.IR file
-.RI [ N ]
-.PP
-.B iv
-.B \-diff
-.RI [ \-u ]
-.RI [ N ]
-.IR file
-.PP
-.B iv
-.B \-l
-.RI [ file ]
-.RI [ \-\-persist ]
-.PP
-.B iv
-.B \-lsbak
-.RI [ file ]
-.RI [ N ]
-.RI [ \-\-persist ]
-.PP
-.B iv
-.BR "\-z," " \-rmbak"
-.RI [ file ]
-.RI [ \-\-persist ]
-.PP
-.B iv
-.BR "\-\-persist," " \-persistence"
-.IR file
-.PP
-.B iv
-.BR "\-\-unpersist," " \-unpersist"
-.IR file
-.PP
-.B iv
 .BR "\-i," " \-\-insert"
 .IR file
 .RI [ start\-end ]
 .IR "text"
 .RI [ \-q ]
 .RI [ \-\-dry\-run ]
-.RI [ \-\-no\-backup ]
 .PP
 .B iv
 .B \-a
@@ -102,7 +66,6 @@ iv \- line-oriented text editor for scripts and pipes
 .RI [ \-m
 .IR pattern ]
 .RI [ \-\-dry\-run ]
-.RI [ \-\-no\-backup ]
 .PP
 .B iv
 .BR "\-r," " \-\-replace"
@@ -113,7 +76,6 @@ iv \- line-oriented text editor for scripts and pipes
 .IR pattern ]
 .RI [ \-q ]
 .RI [ \-\-dry\-run ]
-.RI [ \-\-no\-backup ]
 .PP
 .B iv
 .B \-s
@@ -133,7 +95,6 @@ iv \- line-oriented text editor for scripts and pipes
 .RI [ \-g ]
 .RI [ \-q ]
 .RI [ \-\-dry\-run ]
-.RI [ \-\-no\-backup ]
 .PP
 .B iv
 .BR "\-h," " \-\-help"
@@ -142,8 +103,14 @@ iv \- line-oriented text editor for scripts and pipes
 .BR "\-V," " \-\-version"
 .SH DESCRIPTION
 .B iv
-is a line-oriented text editor for the command line, inspired by ed/sed.
-Designed for composition with pipes and scripts. No external dependencies.
+is a line-oriented text editor for the command line.
+Runtime depends only on libc. Edits compose with pipes.
+.B \-\-help ,
+.B \-\-version
+and diagnostics are English. A Spanish page is
+.B man \-L es iv
+when installed. Distros translate manuals, not
+.BR \-\-version .
 .PP
 Text arguments accept three forms:
 .RS
@@ -177,35 +144,6 @@ outputs {"lines":[1,5,7]} for jq/Python integration.
 Print matching lines where \fIpattern\fR appears.
 By default prints with line numbers; use \fB\-\-no\-numbers\fR to print only the line contents.
 .TP
-.B \-u
-Undo: restore file from backup slot
-.IR N
-(default 1). Up to 10 numbered backups per file (e.g. \fIiv_file.1.bak\fR, \fIiv_file.2.bak\fR).
-.TP
-.B \-diff
-Compare backup
-.IR N
-(default 1) vs current file. With
-.B \-u
-uses unified diff format.
-Prints "no backup found" and exits if that backup slot does not exist.
-.TP
-.B \-l
-List backups (path and size only). Optional \fIfile\fR filters by filename.
-By default, lists both the ephemeral repository (\fI/tmp/iv_<user>\fR) and the persisted repository (\fI~/.local/share/iv\fR).
-If \fB\-\-persist\fR is given, list only the persisted backup repository.
-.TP
-.B \-lsbak
-List backups with metadata (date and user who wrote the backup). Optional \fIfile\fR filters by filename.
-If \fIN\fR is given, print that backup slot's metadata (to stderr) and full content (to stdout).
-Metadata is stored next to the backup as \fIN.meta\fR (timestamp and username).
-By default, lists both the ephemeral repository (\fI/tmp/iv_<user>\fR) and the persisted repository (\fI~/.local/share/iv\fR).
-If \fB\-\-persist\fR is given, list only the persisted backup repository.
-.TP
-.B \-z
-.B \-rmbak
-Remove backups. Optional \fIfile\fR removes all backups for that file only (and their \fI.N.meta\fR files).
-If \fB\-\-persist\fR is given, remove backups from the persisted repository.
 .SH EDIT COMMANDS
 .TP
 .B \-i
@@ -244,7 +182,9 @@ adds more replacements (like sed \-e).
 .B \-F
 \fIdelim\fR \fIN\fR \fIvalue\fR replaces field N (delimiter-separated text, not CSV quoting).
 .B \-E
-enables POSIX ERE. Replacement supports \fB\\1\fR–\fB\\9\fR and \fB&\fR.
+.B \-\-regex
+enable POSIX ERE. Replacement supports \fB\\1\fR–\fB\\9\fR and \fB&\fR.
+An empty pattern is rejected.
 \fB\-g\fR replaces all matches per line.
 .B \-m
 uses the same language as the substitute (literal, or ERE with \fB\-E\fR).
@@ -253,17 +193,49 @@ uses the same language as the substitute (literal, or ERE with \fB\-E\fR).
 .B \-\-dry\-run
 Show what would be done without modifying files.
 .TP
-.B \-\-no\-backup
-Do not create backup before editing.
+.B \-b
+GNU backup with method
+.BR existing .
+.TP
+.B \-\-backup[=METHOD]
+GNU backup. Without METHOD, use
+.B VERSION_CONTROL
+or
+.BR existing .
+Methods (unique abbreviations):
+.BR none / off ,
+.BR numbered / t ,
+.BR existing / nil ,
+.BR simple / never .
+.TP
+.B \-S SUFFIX
+.B \-\-suffix=SUFFIX
+Append SUFFIX to the backup name (default
+.B SIMPLE_BACKUP_SUFFIX
+or
+.BR ~ ).
+Also enables backup.
 .TP
 .B \-\-no\-numbers
 Omit line numbers in \-v and \-va output.
 .TP
 .B \-q
-Suppress tee-like output (inserted text) in \-i, \-a, \-r, \-p.
+Suppress tee-like output (\-i, \-a, \-r, \-p, \-pi) and the
+.B Replaced N
+line on
+.BR \-s .
 .TP
 .B \-\-stdout
-Write result to stdout instead of modifying file. Composable in pipelines.
+Write result to stdout instead of modifying file.
+.TP
+.B \-E
+.B \-\-regex
+POSIX ERE for
+.BR \-s ,
+.BR \-m ,
+.B \-n
+and
+.BR \-nv .
 .SH RANGES
 1-based. Examples:
 .RS
@@ -284,32 +256,64 @@ from line 2 to end
 In insert/replace text: \fB\\n\fR newline, \fB\\t\fR tab, \fB\\\\\fR backslash, \fB\\r\fR carriage return.
 .SH ENVIRONMENT
 .TP
-.B IV_BACKUP_DIR
-Backup root directory for ephemeral backups.
-Default: \fI/tmp/iv_<user>\fR.
-When set, its value is used as the ephemeral backup root.
+.B VERSION_CONTROL
+Default method for
+.B \-\-backup
+and
+.B \-S
+when no method is given.
+.TP
+.B SIMPLE_BACKUP_SUFFIX
+Suffix for simple backups when
+.B \-S
+is not used. Default
+.BR ~ .
 .PP
-Backups are stored per file under a subdirectory derived from the repository name and the file path.
-Each backup slot is stored as \fIN.bak\fR (e.g. \fI1.bak\fR, \fI2.bak\fR, ...), with an optional \fIN.meta\fR alongside it.
-.PP
-Use \fB\-\-persist\fR with backup listing/removal commands to operate on the persisted backup repository.
-.PP
-The single-dash aliases \fB\-persistence\fR and \fB\-unpersist\fR are accepted as equivalents of \fB\-\-persist\fR and \fB\-\-unpersist\fR.
+Backup names sit next to the file:
+.I file~
+or
+.IR file.~N~ .
+Restore with
+.BR mv (1);
+compare with
+.BR diff (1).
 .SH FILE WRITES
-In-place edits write a temporary file in the same directory, \fBfsync\fR it, then \fBrename\fR(2).
+.SH FILE WRITES
+In-place edits open the parent directory, create an exclusive temp via \fBopenat\fR(2),
+\fBfsync\fR it, check that the destination inode is unchanged, then \fBrenameat\fR(2).
 A failed edit leaves the original path unchanged.
+Dangling symbolic links are rejected; they are never replaced by a regular file.
 Symbolic links: the referent is replaced; the symlink inode is kept.
 Hard links: this pathname gets a new inode; other names keep the old bytes.
-Mode and owner are copied; xattrs and ACLs are not.
+Mode and owner are copied when permitted; xattrs and ACLs are not.
+\fBSIGINT\fR/\fBSIGTERM\fR/\fBSIGHUP\fR unlink a leftover \fB.iv.*\fR temp.
+A requested backup is a copy of the original taken immediately before the rename.
+This is not a security boundary against a hostile writable directory.
+.SH BYTES AND LOCALE
+iv is byte-oriented. It runs in the C locale.
+A line is bytes ending in \fB\\n\fR or EOF. Embedded NUL is binary and refused.
+An empty substitute pattern is rejected.
+Directories, FIFOs and devices are rejected; only regular files are edited.
+\fB\-F\fR takes a single delimiter byte (the first byte of the argument).
+POSIX ERE (\fB\-E\fR) is compiled and matched as C-locale bytes.
+Invalid UTF-8 is treated as bytes, not repaired.
+.SH PIPELINES
+Stdout \fBEPIPE\fR (downstream closed) is success: exit 0, no diagnostic.
 .SH EXIT STATUS
 .TP
 .B 0
-Success
+Success (including stdout closed by a downstream filter)
 .TP
 .B 1
 Error (binary file, invalid range, write failure, usage error)
 .SH AUTHOR
 Iván Ezequiel Rodriguez
+.SH COPYRIGHT
+Copyright \(co 2026 Iván Ezequiel Rodriguez.
+License GPLv3+: GNU GPL version 3 or later
+<https://gnu.org/licenses/gpl.html>.
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.
 .SH SEE ALSO
 .BR ed (1),
 .BR sed (1),
