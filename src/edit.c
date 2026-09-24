@@ -195,114 +195,6 @@ void write_with_escapes(FILE *f, const char *text)
     fputc('\n', f);
 }
 
-/* ── apply_patch ────────────────────────────────────────────────────────── */
-
-struct PatchCtx
-{
-    char **lines;
-    int count;
-    int start;
-    int end;
-    const char *new_text;
-    int mode;
-};
-
-static int emit_patch(FILE *f, const struct PatchCtx *p, int *wrote_new)
-{
-    int i;
-
-    *wrote_new = 0;
-    if (p->mode == 4)
-    {
-        for (i = 0; i < p->count; i++)
-        {
-            if (i + 1 == p->start)
-            {
-                write_with_escapes(f, p->new_text);
-                *wrote_new = 1;
-            }
-            if (fputs(p->lines[i], f) == EOF)
-                return -1;
-        }
-        if (p->start > p->count || p->count == 0)
-        {
-            write_with_escapes(f, p->new_text);
-            *wrote_new = 1;
-        }
-        return 0;
-    }
-
-    for (i = 0; i < p->count; i++)
-    {
-        if (i + 1 >= p->start && i + 1 <= p->end)
-        {
-            if (p->mode == 2)
-                continue;
-            if (p->mode == 3)
-            {
-                write_with_escapes(f, p->new_text);
-                *wrote_new = 1;
-            }
-            else if (p->mode == 1)
-            {
-                write_with_escapes(f, p->new_text);
-                if (fputs(p->lines[i], f) == EOF)
-                    return -1;
-                *wrote_new = 1;
-            }
-        }
-        else if (fputs(p->lines[i], f) == EOF)
-            return -1;
-    }
-
-    if ((p->mode == 1 || p->mode == 3) && (p->start > p->count || p->count == 0))
-    {
-        write_with_escapes(f, p->new_text);
-        *wrote_new = 1;
-    }
-    return 0;
-}
-
-static int patch_write(FILE *out, void *ctx)
-{
-    int wrote_new = 0;
-    return emit_patch(out, ctx, &wrote_new);
-}
-
-int apply_patch(const char *filename, char *lines[], int count,
-                int start, int end, const char *new_text, int mode,
-                const IvOpts *opts)
-{
-    struct PatchCtx ctx = {lines, count, start, end, new_text, mode};
-    int wrote_new = 0;
-
-    if (opts->backup != IV_BACKUP_NONE && !opts->to_stdout && !opts->dry_run)
-    {
-        if (iv_backup_file(filename, opts) != 0)
-        {
-            fprintf(stderr, "iv: backup failed, aborting (original unchanged)\n");
-            return -1;
-        }
-    }
-
-    if (opts->dry_run)
-        return 0;
-
-    if (opts->to_stdout)
-    {
-        if (emit_patch(stdout, &ctx, &wrote_new) != 0 || iv_check_stream(stdout) != 0)
-        {
-            fprintf(stderr, "iv: write failed\n");
-            return -1;
-        }
-        return (mode == 2 || wrote_new) ? 0 : -1;
-    }
-
-    if (iv_commit_stream(filename, patch_write, &ctx) != 0)
-        return -1;
-    return 0;
-}
-
 /* ── Search / replace ───────────────────────────────────────────────────── */
 
 static int append_mem(char **out, size_t *len, size_t *cap, const char *s, size_t n)
@@ -398,28 +290,6 @@ static char *replace_in_string(const char *line, const char *pat,
     }
     out[len] = '\0';
     return out;
-}
-
-int search_replace(char *lines[], int count, const char *pattern,
-                   const char *replacement, int global)
-{
-    if (!pattern || !*pattern)
-        return -1;
-    int total = 0;
-    for (int i = 0; i < count; i++)
-    {
-        int n;
-        char *nl = replace_in_string(lines[i], pattern, replacement, global, &n);
-        if (nl && n > 0)
-        {
-            free(lines[i]);
-            lines[i] = nl;
-            total += n;
-        }
-        else
-            free(nl);
-    }
-    return total;
 }
 
 #define IV_RE_NMATCH 10
@@ -539,32 +409,6 @@ static char *replace_regex_in_string(const char *line, regex_t *re,
     return out;
 }
 
-int search_replace_regex(char *lines[], int count, const char *pattern,
-                         const char *replacement, int global)
-{
-    if (!pattern || !*pattern)
-        return -1;
-    regex_t re;
-    if (regcomp(&re, pattern, REG_EXTENDED) != 0)
-        return -1;
-    int total = 0;
-    for (int i = 0; i < count; i++)
-    {
-        int n;
-        char *nl = replace_regex_in_string(lines[i], &re, replacement, global, &n);
-        if (nl && n > 0)
-        {
-            free(lines[i]);
-            lines[i] = nl;
-            total += n;
-        }
-        else
-            free(nl);
-    }
-    regfree(&re);
-    return total;
-}
-
 static int line_matches_filter(const char *line, const char *filter,
                                const regex_t *fre)
 {
@@ -573,139 +417,6 @@ static int line_matches_filter(const char *line, const char *filter,
     if (fre)
         return regexec(fre, line, 0, NULL, 0) == 0;
     return strstr(line, filter) != NULL;
-}
-
-int search_replace_filtered(char *lines[], int count, const char *pattern,
-                            const char *replacement, int global,
-                            const char *filter, int filter_regex)
-{
-    regex_t fre;
-    regex_t *fp = NULL;
-    int total = 0;
-
-    if (!pattern || !*pattern)
-        return -1;
-    if (filter && *filter && filter_regex)
-    {
-        if (regcomp(&fre, filter, REG_EXTENDED | REG_NOSUB) != 0)
-            return -1;
-        fp = &fre;
-    }
-    for (int i = 0; i < count; i++)
-    {
-        int n;
-        char *nl;
-        if (!line_matches_filter(lines[i], filter, fp))
-            continue;
-        nl = replace_in_string(lines[i], pattern, replacement, global, &n);
-        if (nl && n > 0)
-        {
-            free(lines[i]);
-            lines[i] = nl;
-            total += n;
-        }
-        else
-            free(nl);
-    }
-    if (fp)
-        regfree(fp);
-    return total;
-}
-
-int search_replace_regex_filtered(char *lines[], int count, const char *pattern,
-                                  const char *replacement, int global,
-                                  const char *filter, int filter_regex)
-{
-    regex_t re, fre;
-    regex_t *fp = NULL;
-    int total = 0;
-
-    if (!pattern || !*pattern)
-        return -1;
-    if (regcomp(&re, pattern, REG_EXTENDED) != 0)
-        return -1;
-    if (filter && *filter && filter_regex)
-    {
-        if (regcomp(&fre, filter, REG_EXTENDED | REG_NOSUB) != 0)
-        {
-            regfree(&re);
-            return -1;
-        }
-        fp = &fre;
-    }
-    for (int i = 0; i < count; i++)
-    {
-        int n;
-        char *nl;
-        if (!line_matches_filter(lines[i], filter, fp))
-            continue;
-        nl = replace_regex_in_string(lines[i], &re, replacement, global, &n);
-        if (nl && n > 0)
-        {
-            free(lines[i]);
-            lines[i] = nl;
-            total += n;
-        }
-        else
-            free(nl);
-    }
-    if (fp)
-        regfree(fp);
-    regfree(&re);
-    return total;
-}
-
-static char *replace_field_in_line(const char *line, char delim,
-                                   int field_num, const char *value)
-{
-    size_t vlen = strlen(value);
-    size_t linelen = strlen(line);
-    char *out = malloc(linelen + vlen + 64);
-    if (!out)
-        return NULL;
-    const char *p = line, *field_start = line;
-    int f = 1;
-    while (f < field_num && *p)
-    {
-        if (*p == delim)
-        {
-            f++;
-            p++;
-            field_start = p;
-        }
-        else
-            p++;
-    }
-    if (f != field_num)
-    {
-        strcpy(out, line);
-        return out;
-    }
-    size_t len = (size_t)(field_start - line);
-    memcpy(out, line, len);
-    memcpy(out + len, value, vlen + 1);
-    len += vlen;
-    while (*p && *p != delim && *p != '\n')
-        p++;
-    strcpy(out + len, p);
-    return out;
-}
-
-int replace_field(char *lines[], int count, char delim, int field_num,
-                  const char *value)
-{
-    if (!delim || field_num < 1)
-        return 0;
-    for (int i = 0; i < count; i++)
-    {
-        char *nl = replace_field_in_line(lines[i], delim, field_num, value);
-        if (nl)
-        {
-            free(lines[i]);
-            lines[i] = nl;
-        }
-    }
-    return count;
 }
 
 #define IV_CHUNK (256 * 1024)
@@ -1270,8 +981,45 @@ static void tail_slice(const LineRing *r, const IvRangePlan *p,
         *at = r->n - 1;
 }
 
+static int apply_stream_op(FILE *out, int op, int act, int *once_done,
+                           const char *line, int lineno, int numbered,
+                           const char *text)
+{
+    int pr;
+
+    if (op == IV_STREAM_VIEW)
+        return act ? emit_line(out, line, lineno, numbered) : 0;
+    if (op == IV_STREAM_DELETE)
+        return act ? 0 : emit_line(out, line, 0, 0);
+    if (op == IV_STREAM_REPLACE)
+        return act ? emit_repl(out, text) : emit_line(out, line, 0, 0);
+    if (op == IV_STREAM_INSERT)
+    {
+        if (act)
+        {
+            pr = emit_repl(out, text);
+            if (pr != 0)
+                return pr;
+        }
+        return emit_line(out, line, 0, 0);
+    }
+    if (op == IV_STREAM_INSERT_ONCE)
+    {
+        if (act && once_done && !*once_done)
+        {
+            pr = emit_repl(out, text);
+            if (pr != 0)
+                return pr;
+            *once_done = 1;
+        }
+        return emit_line(out, line, 0, 0);
+    }
+    return -1;
+}
+
 static int flush_tail(FILE *out, const LineRing *r, const IvRangePlan *p,
-                      int op, const char *text, int no_numbers, int total)
+                      int op, const char *text, int no_numbers, int total,
+                      int *once_done)
 {
     int af, at, k, lineno;
 
@@ -1279,37 +1027,50 @@ static int flush_tail(FILE *out, const LineRing *r, const IvRangePlan *p,
     for (k = 0; k < r->n; k++)
     {
         int act = (af <= at && k >= af && k <= at);
+        int pr;
 
         lineno = total - r->n + 1 + k;
-        if (op == IV_STREAM_VIEW)
-        {
-            if (act)
-            {
-                int pr = emit_line(out, ring_at(r, k), lineno, !no_numbers);
+        pr = apply_stream_op(out, op, act, once_done, ring_at(r, k), lineno,
+                             !no_numbers, text);
+        if (pr != 0)
+            return pr;
+    }
+    return 0;
+}
 
-                if (pr != 0)
-                    return pr;
-            }
+static int stream_append(FILE *in, FILE *out, const char *text)
+{
+    char *line = NULL;
+    size_t cap = 0;
+    ssize_t nread;
+    int pr;
+
+    while ((nread = getline(&line, &cap, in)) != -1)
+    {
+        if (memchr(line, 0, (size_t)nread))
+        {
+            free(line);
+            fprintf(stderr, "iv: refusing to edit binary file\n");
+            return -1;
         }
-        else if (op == IV_STREAM_DELETE)
+        pr = emit_line(out, line, 0, 0);
+        if (pr > 0)
         {
-            if (!act)
-            {
-                int pr = emit_line(out, ring_at(r, k), 0, 0);
-
-                if (pr != 0)
-                    return pr;
-            }
+            free(line);
+            return 0;
         }
-        else if (op == IV_STREAM_REPLACE)
+        if (pr < 0)
         {
-            int pr = act ? emit_repl(out, text)
-                         : emit_line(out, ring_at(r, k), 0, 0);
-
-            if (pr != 0)
-                return pr;
+            free(line);
+            return -1;
         }
     }
+    free(line);
+    if (ferror(in))
+        return -1;
+    pr = emit_repl(out, text);
+    if (pr < 0)
+        return -1;
     return 0;
 }
 
@@ -1322,9 +1083,12 @@ int iv_stream_by_plan(FILE *in, FILE *out, const IvRangePlan *p, int op,
     int n = 0;
     LineRing ring;
     int hold;
+    int once_done = 0;
 
     if (!in || !out || !p)
         return -1;
+    if (op == IV_STREAM_APPEND)
+        return stream_append(in, out, text);
     hold = (p->kind == IV_RANGE_TAIL) ? p->window
            : (p->kind == IV_RANGE_HYBRID) ? p->hold
                                           : 0;
@@ -1335,6 +1099,7 @@ int iv_stream_by_plan(FILE *in, FILE *out, const IvRangePlan *p, int op,
     {
         char *owned;
         char *evicted;
+        int pr;
 
         n++;
         if (memchr(line, 0, (size_t)nread))
@@ -1349,42 +1114,14 @@ int iv_stream_by_plan(FILE *in, FILE *out, const IvRangePlan *p, int op,
         {
             int hit = in_forward(n, p);
 
-            if (op == IV_STREAM_VIEW)
-            {
-                if (p->end >= 0 && n > p->end)
-                    break;
-                if (hit)
-                {
-                    int pr = emit_line(out, line, n, !no_numbers);
-
-                    if (pr > 0)
-                        goto done;
-                    if (pr < 0)
-                        goto fail;
-                }
-            }
-            else if (op == IV_STREAM_DELETE)
-            {
-                if (!hit)
-                {
-                    int pr = emit_line(out, line, 0, 0);
-
-                    if (pr > 0)
-                        goto done;
-                    if (pr < 0)
-                        goto fail;
-                }
-            }
-            else
-            {
-                int pr = hit ? emit_repl(out, text)
-                             : emit_line(out, line, 0, 0);
-
-                if (pr > 0)
-                    goto done;
-                if (pr < 0)
-                    goto fail;
-            }
+            if (op == IV_STREAM_VIEW && p->end >= 0 && n > p->end)
+                break;
+            pr = apply_stream_op(out, op, hit, &once_done, line, n,
+                                 !no_numbers, text);
+            if (pr > 0)
+                goto done;
+            if (pr < 0)
+                goto fail;
             continue;
         }
 
@@ -1392,14 +1129,11 @@ int iv_stream_by_plan(FILE *in, FILE *out, const IvRangePlan *p, int op,
         {
             if (op == IV_STREAM_VIEW)
                 continue;
-            {
-                int pr = emit_line(out, line, 0, 0);
-
-                if (pr > 0)
-                    goto done;
-                if (pr < 0)
-                    goto fail;
-            }
+            pr = emit_line(out, line, 0, 0);
+            if (pr > 0)
+                goto done;
+            if (pr < 0)
+                goto fail;
             continue;
         }
 
@@ -1416,8 +1150,7 @@ int iv_stream_by_plan(FILE *in, FILE *out, const IvRangePlan *p, int op,
                 free(evicted);
             else
             {
-                int pr = emit_line(out, evicted, 0, 0);
-
+                pr = emit_line(out, evicted, 0, 0);
                 free(evicted);
                 if (pr > 0)
                     goto done;
@@ -1425,31 +1158,25 @@ int iv_stream_by_plan(FILE *in, FILE *out, const IvRangePlan *p, int op,
                     goto fail;
             }
         }
+        else if (op == IV_STREAM_VIEW)
+        {
+            pr = emit_line(out, evicted, n - hold, !no_numbers);
+            free(evicted);
+            if (pr > 0)
+                goto done;
+            if (pr < 0)
+                goto fail;
+        }
+        else if (op == IV_STREAM_DELETE)
+            free(evicted);
         else
         {
-            /* hybrid: evicted is inside the range */
-            if (op == IV_STREAM_VIEW)
-            {
-                int pr = emit_line(out, evicted, n - hold, !no_numbers);
-
-                free(evicted);
-                if (pr > 0)
-                    goto done;
-                if (pr < 0)
-                    goto fail;
-            }
-            else if (op == IV_STREAM_DELETE)
-                free(evicted);
-            else
-            {
-                int pr = emit_repl(out, text);
-
-                free(evicted);
-                if (pr > 0)
-                    goto done;
-                if (pr < 0)
-                    goto fail;
-            }
+            pr = apply_stream_op(out, op, 1, &once_done, evicted, 0, 0, text);
+            free(evicted);
+            if (pr > 0)
+                goto done;
+            if (pr < 0)
+                goto fail;
         }
     }
     free(line);
@@ -1457,7 +1184,7 @@ int iv_stream_by_plan(FILE *in, FILE *out, const IvRangePlan *p, int op,
 
     if (p->kind == IV_RANGE_TAIL)
     {
-        int pr = flush_tail(out, &ring, p, op, text, no_numbers, n);
+        int pr = flush_tail(out, &ring, p, op, text, no_numbers, n, &once_done);
 
         if (pr > 0)
             goto done;
@@ -1480,6 +1207,14 @@ int iv_stream_by_plan(FILE *in, FILE *out, const IvRangePlan *p, int op,
             if (pr < 0)
                 goto fail;
         }
+    }
+    if (n == 0 && (op == IV_STREAM_INSERT || op == IV_STREAM_INSERT_ONCE ||
+                   op == IV_STREAM_REPLACE))
+    {
+        int pr = emit_repl(out, text);
+
+        if (pr < 0)
+            goto fail;
     }
     ring_free(&ring);
     return ferror(in) ? -1 : 0;

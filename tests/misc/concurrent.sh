@@ -1,13 +1,16 @@
 #!/bin/sh
 # Destination inode change before renameat aborts; the new file is not clobbered.
+# IV_TEST_PAUSE_BEFORE_RENAME opens a 200ms window so this is not a race lottery.
 . "${srcdir=.}/tests/init.sh"
 
-# Enough data that a temp appears before rename.
 i=0
-while test $i -lt 80000; do
+while test $i -lt 2000; do
   printf 'keep\n'
   i=$((i + 1))
 done > conc || framework_failure_
+
+IV_TEST_PAUSE_BEFORE_RENAME=1
+export IV_TEST_PAUSE_BEFORE_RENAME
 
 $IV -s conc keep KEEP -q &
 ivpid=$!
@@ -16,6 +19,8 @@ n=0
 while test $n -lt 80; do
   if ls .iv.* >/dev/null 2>&1; then
     rm -f conc
+    # Consume an inode so tmpfs does not recycle conc's number.
+    printf 'x\n' > pad || framework_failure_
     printf 'other\n' > conc
     swapped=1
     break
@@ -29,20 +34,10 @@ done
 wait $ivpid
 st=$?
 
-if test $swapped = 1; then
-  # iv must fail the inode check, not overwrite "other".
-  test $st -ne 0 || fail=1
-  printf 'other\n' > exp || framework_failure_
-  compare exp conc || fail=1
-fi
-# If iv finished first, the file is fully KEEP or keep — not a mix.
-if test $swapped = 0; then
-  first=$(head -n 1 conc)
-  case $first in
-    keep|KEEP) ;;
-    *) fail=1 ;;
-  esac
-fi
+test $swapped -eq 1 || fail=1
+test $st -ne 0 || fail=1
+printf 'other\n' > exp || framework_failure_
+compare exp conc || fail=1
 
 leftover=$(ls -d .iv.* 2>/dev/null | wc -l)
 test "$leftover" -eq 0 || fail=1

@@ -14,22 +14,6 @@ iv \- line-oriented text editor for scripts and pipes
 .IR file
 .PP
 .B iv
-.B \-wc
-.IR file
-.PP
-.B iv
-.B \-n
-.IR file
-.IR pattern
-.RI [ \-\-json ]
-.PP
-.B iv
-.B \-nv
-.RI [ \-\-no\-numbers ]
-.IR file
-.IR pattern
-.PP
-.B iv
 .BR "\-i," " \-\-insert"
 .IR file
 .RI [ start\-end ]
@@ -131,19 +115,11 @@ View entire file with line numbers.
 .TP
 .B \-va
 View line range. Order: \fB\-va\fR \fIstart\-end\fR \fIfile\fR.
-.TP
-.B \-wc
-Count lines.
-.TP
-.B \-n
-Print line numbers where \fIpattern\fR appears.
-.B \-\-json
-outputs {"lines":[1,5,7]} for jq/Python integration.
-.TP
-.B \-nv
-Print matching lines where \fIpattern\fR appears.
-By default prints with line numbers; use \fB\-\-no\-numbers\fR to print only the line contents.
-.TP
+Count or search with
+.BR wc (1)
+or
+.BR grep (1)
+on the view output.
 .SH EDIT COMMANDS
 .TP
 .B \-i
@@ -231,11 +207,9 @@ Write result to stdout instead of modifying file.
 .B \-E
 .B \-\-regex
 POSIX ERE for
-.BR \-s ,
-.BR \-m ,
-.B \-n
+.BR \-s
 and
-.BR \-nv .
+.BR \-m .
 .SH RANGES
 1-based. Examples:
 .RS
@@ -278,7 +252,6 @@ Restore with
 compare with
 .BR diff (1).
 .SH FILE WRITES
-.SH FILE WRITES
 In-place edits open the parent directory, create an exclusive temp via \fBopenat\fR(2),
 \fBfsync\fR it, check that the destination inode is unchanged, then \fBrenameat\fR(2).
 A failed edit leaves the original path unchanged.
@@ -289,8 +262,10 @@ Mode and owner are copied when permitted; xattrs and ACLs are not.
 \fBSIGINT\fR/\fBSIGTERM\fR/\fBSIGHUP\fR unlink a leftover \fB.iv.*\fR temp.
 A requested backup is a copy of the original taken immediately before the rename.
 This is not a security boundary against a hostile writable directory.
-.SH BYTES AND LOCALE
-iv is byte-oriented. It runs in the C locale.
+.SH TEXT MODEL
+iv is deliberately byte-oriented. It sets
+.B LC_ALL=C
+and uses C-locale POSIX ERE. That is the interface, not a hidden implementation choice.
 A line is bytes ending in \fB\\n\fR or EOF. Embedded NUL is binary and refused.
 An empty substitute pattern is rejected.
 Directories, FIFOs and devices are rejected; only regular files are edited.

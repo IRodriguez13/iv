@@ -19,6 +19,7 @@ manual (`man -L es iv`), not `--version` (scripts parse the first line).
 make
 make test             # smoke + safety + completions + misc
 make test-musl        # same suite, musl-gcc binary
+make bench            # iv vs GNU sed / mawk (1M+3M, equiv then time)
 make install          # default PREFIX=~/.local
 PREFIX=/usr/local make install
 ./install.sh
@@ -47,14 +48,11 @@ zsh: add that directory to `fpath` before `compinit`. bash needs the
 | `iv -v file` | Print the file with line numbers |
 | `iv -v file --no-numbers` | Print the file without numbers |
 | `iv -va start-end file` | Print a line range |
-| `iv -wc file` | Print the line count |
-| `iv -n file pattern` | Print line numbers that contain *pattern* |
-| `iv -n file pattern --json` | `{"lines":[1,5,7]}` |
-| `iv -nv file pattern` | Print matching lines (numbers on unless `--no-numbers`) |
 | `iv -V`, `iv --version` | Print version and license |
 | `iv -h`, `iv --help` | Print usage |
 
-`-n` / `-nv` take a literal substring unless `-E` / `--regex` is set (POSIX ERE).
+Count or search with the usual tools: `iv -v file --no-numbers | wc -l`,
+`… | grep`.
 
 ### Edit
 
@@ -72,7 +70,7 @@ zsh: add that directory to `fpath` before `compinit`. bash needs the
 | `iv -s file pattern replacement` | Literal substitute (first match per line) |
 | `iv -s file pattern replacement -m filter` | Substitute only on lines that contain *filter* |
 | `iv -s file -F ',' 2 X` | Replace field 2 (single-byte delimiter; no CSV quotes) |
-| `iv -s file pat repl -e pat2 repl2` | Further pairs (at most 16) |
+| `iv -s file pat repl -e pat2 repl2` | Further pairs |
 | `iv -s file pattern replacement -E` | POSIX ERE; replacement may use `\1`–`\9` and `&` |
 | `iv -s file pattern replacement -g` | Every match on the line |
 
@@ -87,12 +85,11 @@ as the substitute (literal, or ERE with `-E`).
 | `-b` | GNU backup, method `existing` |
 | `--backup[=METHOD]` | GNU backup. No method: `$VERSION_CONTROL`, else `existing` |
 | `-S SUFFIX`, `--suffix=SUFFIX` | Backup suffix (also enables backup). Default `$SIMPLE_BACKUP_SUFFIX` or `~` |
-| `--no-numbers` | No line numbers (`-v`, `-va`, `-nv`) |
+| `--no-numbers` | No line numbers (`-v`, `-va`) |
 | `-q` | No tee of inserted text (`-i`, `-a`, `-r`, `-p`, `-pi`); no `Replaced N` on `-s` |
 | `--stdout` | Write the result to stdout; leave the file unchanged |
 | `-g` | Global substitute |
-| `-E`, `--regex` | POSIX ERE for `-s`, `-m`, `-n`, `-nv` |
-| `--json` | JSON line-number list (`-n`) |
+| `-E`, `--regex` | POSIX ERE for `-s` and `-m` |
 
 ## Ranges
 
@@ -186,9 +183,10 @@ it is a copy of the original taken immediately before the rename.
 - This is not a security boundary in a directory writable by an untrusted
   party.
 
-## Bytes
+## Text model
 
-iv sets `LC_ALL=C` and treats input as bytes.
+iv is deliberately byte-oriented. It sets `LC_ALL=C` and uses C-locale
+POSIX ERE. That is the interface, not a hidden implementation choice.
 
 - A line is bytes through `\n`, or through EOF if the last line has no newline.
 - `-F` uses the first byte of its delimiter argument.
@@ -201,14 +199,6 @@ iv sets `LC_ALL=C` and treats input as bytes.
 |--------|---------|
 | 0 | Success, including stdout `EPIPE` |
 | 1 | Error (usage, missing file, binary, invalid range, write failure, empty pattern, non-regular file) |
-
-## Limits
-
-- Streamed: `-v`, `-va`, `-wc`, `-n`, `-nv`, `-s`, `-F`, `-d`, `-r`.
-  End-relative ranges keep a ring of the last N lines.
-- Loaded as lines: `-i`, `-a`, `-p`, `-pi`.
-- Line length has no fixed cap (the stream reader grows from 256 KiB).
-- `-e` pairs: 16.
 
 ## Manuals
 

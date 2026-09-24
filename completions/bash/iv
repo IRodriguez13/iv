@@ -10,8 +10,8 @@ _iv()
 	cur=${COMP_WORDS[COMP_CWORD]}
 	prev=${COMP_WORDS[COMP_CWORD-1]}
 
-	local cmds="-h --help -V --version -v -va -wc -n -nv -i -insert -a -p -pi -d -delete -r -replace -s"
-	local opts="--dry-run --no-numbers -g -E --regex -q --stdout --json -m -F -e -b --backup --suffix -S"
+	local cmds="-h --help -V --version -v -va -i -insert -a -p -pi -d -delete -r -replace -s"
+	local opts="--dry-run --no-numbers -g -E --regex -q --stdout -m -F -e -b --backup --suffix -S"
 
 	if [[ ${COMP_CWORD} -eq 1 ]]; then
 		COMPREPLY=( $(compgen -W "${cmds}" -- "${cur}") )

@@ -12,8 +12,6 @@
 #include <string.h>
 #include <stddef.h>
 
-#define INITIAL_LINES 256
-
 #define IV_VERSION "0.11.1"
 
 /* GNU Coreutils --backup methods (cp/mv/install). Default is none. */
@@ -31,10 +29,9 @@ typedef struct {
     const char *backup_suffix; /* -S / --suffix; else SIMPLE_BACKUP_SUFFIX or ~ */
     int no_numbers;
     int global_replace;     /* -g: replace all matches per line */
-    int use_regex;          /* -E: regex for substitute and -m / -n / -nv */
+    int use_regex;          /* -E: regex for substitute and -m */
     int quiet;              /* -q: suppress tee-like output */
     int to_stdout;          /* --stdout: write result to stdout, do not modify file */
-    int json;               /* --json: structured output for -n */
     const char *multimatch; /* -m: apply only to matching lines */
     char field_delim;       /* -F: field delimiter (byte, not CSV quoting) */
     int field_num;          /* -F: field number (1-based) */
@@ -71,11 +68,14 @@ int range_needs_total(const char *spec);
 enum {
     IV_STREAM_VIEW = 0,
     IV_STREAM_DELETE = 2,
-    IV_STREAM_REPLACE = 3
+    IV_STREAM_REPLACE = 3,
+    IV_STREAM_INSERT = 4,      /* text before each line in range */
+    IV_STREAM_INSERT_ONCE = 5, /* text before the first line in range */
+    IV_STREAM_APPEND = 6       /* copy all lines, then text at EOF */
 };
 
-/* Stream a planned range. VIEW writes to out; DELETE/REPLACE transform.
- * text is used for REPLACE (once per line in range). */
+/* Stream a planned range. VIEW writes to out; the rest transform.
+ * text is used for REPLACE / INSERT / APPEND. */
 int iv_stream_by_plan(FILE *in, FILE *out, const IvRangePlan *p, int op,
                       const char *text, int no_numbers);
 int iv_stream_delete_match(FILE *in, FILE *out, const char *filter,
@@ -92,27 +92,6 @@ int iv_backup_file(const char *path, const IvOpts *opts);
 
 void write_with_escapes(FILE *f, const char *text);
 
-int apply_patch(const char *filename, char *lines[], int count,
-                int start, int end, const char *new_text, int mode,
-                const IvOpts *opts);
-
-int search_replace(char *lines[], int count, const char *pattern,
-                   const char *replacement, int global);
-
-int search_replace_regex(char *lines[], int count, const char *pattern,
-                         const char *replacement, int global);
-
-int search_replace_filtered(char *lines[], int count, const char *pattern,
-                            const char *replacement, int global,
-                            const char *filter, int filter_regex);
-
-int search_replace_regex_filtered(char *lines[], int count, const char *pattern,
-                                  const char *replacement, int global,
-                                  const char *filter, int filter_regex);
-
-int replace_field(char *lines[], int count, char delim, int field_num,
-                  const char *value);
-
 /* Stream substitute/field transforms. nrepl receives replacement count.
  * Returns 0 on success, -1 on regex/I/O error. */
 int iv_stream_subst(FILE *in, FILE *out, const char *(*pairs)[2],
@@ -123,7 +102,6 @@ int iv_stream_fields(FILE *in, FILE *out, char delim, int field_num,
 /* Transactional write: temp + fsync + rename. Original intact on failure.
  * write_fn: 0 = commit, >0 = discard temp (no-op success), <0 = fail. */
 int iv_commit_stream(const char *path, IvWriteFn write_fn, void *ctx);
-int iv_commit_lines(const char *path, char *lines[], int count);
 int iv_copy_file(const char *src, const char *dst);
 void iv_init_stdio(void);
 void iv_enlarge_buf(FILE *f);
@@ -133,28 +111,9 @@ int iv_out_status(FILE *out);
 int iv_stdout_closed(void);
 int iv_check_stream(FILE *f);
 
-int write_lines_to_file(const char *filename, char *lines[], int count);
-int write_lines_to_stream(FILE *f, char *lines[], int count);
-
 char *read_stdin(void);
 char *read_file_content(const char *path);
-int   is_binary_file(const char *path);
 
-void show_file(char *lines[], int count, int no_numbers);
-void show_range(char *lines[], int count, int start, int end, int no_numbers);
-int  wc_lines(char *lines[], int count);
-void find_line_numbers(char *lines[], int count, const char *pattern, int json,
-                       int use_regex);
-void find_matching_lines(char *lines[], int count, const char *pattern,
-                         int no_numbers, int use_regex);
-int  stream_file_with_numbers(const char *path);
 int  stream_show_file(FILE *f, int no_numbers);
-int  stream_show_range(FILE *f, int start, int end, int no_numbers);
-int  stream_wc(FILE *f);
-int  stream_find_line_numbers(FILE *f, const char *pattern, int json,
-                              int use_regex);
-int  stream_find_matching_lines(FILE *f, const char *pattern, int no_numbers,
-                                int use_regex);
-int  stream_count_lines(FILE *f);
 
 #endif

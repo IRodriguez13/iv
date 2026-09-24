@@ -302,35 +302,6 @@ int iv_copy_file(const char *src, const char *dst)
     return 0;
 }
 
-static int write_lines_cb(FILE *out, void *ctx)
-{
-    struct
-    {
-        char **lines;
-        int count;
-    } *c = ctx;
-    int i, pr;
-
-    for (i = 0; i < c->count; i++)
-    {
-        pr = iv_fputs(out, c->lines[i]);
-        if (pr != 0)
-            return (pr > 0) ? 0 : -1;
-    }
-    return 0;
-}
-
-int iv_commit_lines(const char *path, char *lines[], int count)
-{
-    struct
-    {
-        char **lines;
-        int count;
-    } ctx = {lines, count};
-
-    return iv_commit_stream(path, write_lines_cb, &ctx);
-}
-
 int iv_commit_stream(const char *path, IvWriteFn write_fn, void *ctx)
 {
     char real[PATH_MAX];
@@ -442,6 +413,10 @@ int iv_commit_stream(const char *path, IvWriteFn write_fn, void *ctx)
     }
     out = NULL;
 
+    /* Test hook: concurrent.sh must observe the temp and swap the dest. */
+    if (getenv("IV_TEST_PAUSE_BEFORE_RENAME"))
+        usleep(200000);
+
     if (existed)
     {
         struct stat now;
@@ -476,24 +451,4 @@ fail_opened:
     if (dirfd >= 0)
         close(dirfd);
     return -1;
-}
-
-int write_lines_to_file(const char *filename, char *lines[], int count)
-{
-    return iv_commit_lines(filename, lines, count);
-}
-
-int write_lines_to_stream(FILE *f, char *lines[], int count)
-{
-    int i, pr;
-
-    for (i = 0; i < count; i++)
-    {
-        pr = iv_fputs(f, lines[i]);
-        if (pr > 0)
-            return 0;
-        if (pr < 0)
-            return -1;
-    }
-    return iv_check_stream(f);
 }

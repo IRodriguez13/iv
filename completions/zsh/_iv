@@ -9,9 +9,6 @@ _iv() {
 	cmds=(
 		'-v:view file with line numbers'
 		'-va:view line range'
-		'-wc:count lines'
-		'-n:line numbers matching pattern'
-		'-nv:lines matching pattern'
 		'-i:insert text'
 		'-insert:insert text'
 		'-a:append text'
@@ -33,7 +30,6 @@ _iv() {
 		'(-E --regex)'{-E,--regex}'[Use regex in substitute]' \
 		'-q[Quiet tee output]' \
 		'--stdout[Write to stdout without modifying file]' \
-		'--json[JSON output for -n]' \
 		'-b[GNU backup (existing)]' \
 		'--backup=-[GNU backup method]:method:(none numbered existing simple)' \
 		'-S+[Backup suffix]:suffix:' \
@@ -50,7 +46,7 @@ _iv() {
 			;;
 		args)
 			case $words[1] in
-				-v|-va|-wc|-n|-nv|-i|-insert|-a|-p|-pi|-d|-delete|-r|-replace|-s)
+				-v|-va|-i|-insert|-a|-p|-pi|-d|-delete|-r|-replace|-s)
 					_files
 					;;
 			esac

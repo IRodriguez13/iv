@@ -92,11 +92,6 @@ if "$BIN" -s fullsrc.txt old new --stdout -q >/dev/full 2>/dev/null; then
 fi
 [[ "$(cat fullsrc.txt)" == "old" ]] || fail "/dev/full mutated source"
 
-# ── -wc / -n stream ──
-printf 'a\nb\na\n' > view.txt
-[[ "$("$BIN" -wc view.txt)" == "3" ]] || fail "stream -wc"
-[[ "$("$BIN" -n view.txt a --json)" == '{"lines":[1,3]}' ]] || fail "stream -n json"
-
 # ── ring buffer: last-N ranges without loading the file ──
 printf 'a\nb\nc\nd\ne\n' > tail.txt
 [[ "$("$BIN" -va -3--1 tail.txt --no-numbers)" == $'c\nd\ne' ]] || fail "-va -3--1"

@@ -20,6 +20,7 @@ primera línea).
 make
 make test             # smoke + safety + completions + misc
 make test-musl        # la misma suite, binario musl-gcc
+make bench            # iv vs GNU sed / mawk (1M+3M, equivalencia y luego tiempo)
 make install          # PREFIX por defecto: ~/.local
 PREFIX=/usr/local make install
 ./install.sh
@@ -48,14 +49,11 @@ paquete `bash-completion`. fish carga `vendor_completions.d` solo.
 | `iv -v archivo` | Imprime el archivo con números de línea |
 | `iv -v archivo --no-numbers` | Sin números |
 | `iv -va inicio-fin archivo` | Imprime un rango |
-| `iv -wc archivo` | Imprime el número de líneas |
-| `iv -n archivo patrón` | Números de línea que contienen *patrón* |
-| `iv -n archivo patrón --json` | `{"lines":[1,5,7]}` |
-| `iv -nv archivo patrón` | Líneas coincidentes (con número salvo `--no-numbers`) |
 | `iv -V`, `iv --version` | Versión y licencia |
 | `iv -h`, `iv --help` | Uso |
 
-`-n` / `-nv` buscan una subcadena literal salvo `-E` / `--regex` (ERE POSIX).
+Contar o buscar con las herramientas de siempre: `iv -v archivo --no-numbers | wc -l`,
+`… | grep`.
 
 ### Edición
 
@@ -73,7 +71,7 @@ paquete `bash-completion`. fish carga `vendor_completions.d` solo.
 | `iv -s archivo patrón reemplazo` | Sustitución literal (primera coincidencia por línea) |
 | `iv -s archivo patrón reemplazo -m filtro` | Solo en líneas que contienen *filtro* |
 | `iv -s archivo -F ',' 2 X` | Reemplaza el campo 2 (delimitador de un byte; no es CSV con comillas) |
-| `iv -s archivo pat repl -e pat2 repl2` | Pares adicionales (máximo 16) |
+| `iv -s archivo pat repl -e pat2 repl2` | Pares adicionales |
 | `iv -s archivo patrón reemplazo -E` | ERE POSIX; el reemplazo admite `\1`–`\9` y `&` |
 | `iv -s archivo patrón reemplazo -g` | Todas las coincidencias de la línea |
 
@@ -88,12 +86,11 @@ lenguaje que la sustitución (literal, o ERE con `-E`).
 | `-b` | Backup GNU, método `existing` |
 | `--backup[=METHOD]` | Backup GNU. Sin método: `$VERSION_CONTROL`, si no `existing` |
 | `-S SUFFIX`, `--suffix=SUFFIX` | Sufijo (también activa el backup). Por defecto `$SIMPLE_BACKUP_SUFFIX` o `~` |
-| `--no-numbers` | Sin números de línea (`-v`, `-va`, `-nv`) |
+| `--no-numbers` | Sin números de línea (`-v`, `-va`) |
 | `-q` | Sin eco tipo tee (`-i`, `-a`, `-r`, `-p`, `-pi`); sin `Replaced N` en `-s` |
 | `--stdout` | Escribe el resultado a stdout; no modifica el archivo |
 | `-g` | Sustitución global |
-| `-E`, `--regex` | ERE POSIX en `-s`, `-m`, `-n`, `-nv` |
-| `--json` | Lista JSON de números (`-n`) |
+| `-E`, `--regex` | ERE POSIX en `-s` y `-m` |
 
 ## Rangos
 
@@ -192,9 +189,10 @@ una copia del original tomada justo antes del rename.
 - Esto no es un límite de seguridad en un directorio escribible por un
   tercero.
 
-## Bytes
+## Modelo de texto
 
-iv fija `LC_ALL=C` y trata la entrada como bytes.
+iv es deliberadamente orientado a bytes. Fija `LC_ALL=C` y usa ERE POSIX
+en locale C. Eso es la interfaz, no un detalle de implementación oculto.
 
 - Una línea son bytes hasta `\n`, o hasta EOF si la última no tiene nueva línea.
 - `-F` usa el primer byte del argumento delimitador.
@@ -207,14 +205,6 @@ iv fija `LC_ALL=C` y trata la entrada como bytes.
 |--------|-------------|
 | 0 | Éxito, incluido `EPIPE` en stdout |
 | 1 | Error (uso, archivo inexistente, binario, rango inválido, escritura, patrón vacío, no regular) |
-
-## Límites
-
-- En stream: `-v`, `-va`, `-wc`, `-n`, `-nv`, `-s`, `-F`, `-d`, `-r`.
-  Los rangos relativos al final guardan un anillo de las últimas N líneas.
-- Cargados en líneas: `-i`, `-a`, `-p`, `-pi`.
-- La longitud de línea no tiene tope fijo (el lector crece desde 256 KiB).
-- Pares `-e`: 16.
 
 ## Manuales
 

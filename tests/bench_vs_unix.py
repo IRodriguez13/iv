@@ -6,6 +6,10 @@ Scope (RFC): one-pass explicit edits. Pipe to grep/tail/wc; do not bench them.
   -d -m                            vs GNU sed / awk
   -s -F field replace              vs awk
 
+Before timing, each declared-equivalent pair must produce identical bytes
+(stdout, or the rewritten file for inplace). Timing interleaves tools each
+trial. RSS is the median of GNU time peak RSS (also min/p90).
+
 Env:
   IV_BENCH_TRIALS     default 11
   IV_BENCH_LINES      default 200000,1000000,3000000
@@ -13,12 +17,14 @@ Env:
   IV_BENCH_AWK        path to awk
   IV_BENCH_TASKSET    e.g. 0-3  (empty = no pin)
   IV_BENCH_WARMUP     discarded runs, default 1
+  IV_BENCH_SEED       shuffle seed (default: from os.urandom)
 """
 
 from __future__ import annotations
 
 import os
 import platform
+import random
 import shutil
 import statistics
 import subprocess
@@ -75,13 +81,19 @@ def prefix_taskset(argv: list[str]) -> list[str]:
     return ["taskset", "-c", pin] + argv
 
 
+def subst_file(argv: list[str], src: str | None) -> list[str]:
+    if src is None:
+        return list(argv)
+    return [src if a == "__FILE__" else a for a in argv]
+
+
 def run_once(cmd: list[str], inplace_src: str | None) -> tuple[float, int | None, int]:
     work = None
     argv = list(cmd)
     if inplace_src is not None:
         work = inplace_src + ".work"
         shutil.copy2(inplace_src, work)
-        argv = [work if a == "__FILE__" else a for a in argv]
+        argv = subst_file(argv, work)
     time_bin = which("/usr/bin/time") or "time"
     wrapped = prefix_taskset([time_bin, "-f", "%e %M", "--"] + argv)
     t0 = time.perf_counter()
@@ -98,37 +110,40 @@ def run_once(cmd: list[str], inplace_src: str | None) -> tuple[float, int | None
     return wall, rss, r.returncode
 
 
-def bench(name: str, cmd: list[str], trials: int, warmup: int, inplace: str | None) -> dict:
-    for _ in range(warmup):
-        run_once(cmd, inplace)
-    walls: list[float] = []
-    rsses: list[int] = []
-    rc = 0
-    for _ in range(trials):
-        w, rss, rc = run_once(cmd, inplace)
-        walls.append(w)
-        if rss is not None:
-            rsses.append(rss)
-    return {
-        "name": name,
-        "cmd": " ".join(cmd),
-        "n": trials,
-        "min": min(walls),
-        "med": median(walls),
-        "p90": p90(walls),
-        "rss": min(rsses) if rsses else None,
-        "rc": rc,
-    }
+def capture_bytes(cmd: list[str], inplace_src: str | None) -> tuple[bytes, int]:
+    """Run once; return stdout (or rewritten file) and rc."""
+    work = None
+    argv = list(cmd)
+    if inplace_src is not None:
+        work = inplace_src + ".equiv"
+        shutil.copy2(inplace_src, work)
+        argv = subst_file(argv, work)
+    r = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    if inplace_src is not None:
+        data = open(work, "rb").read() if work and os.path.exists(work) else b""
+        if work and os.path.exists(work):
+            os.remove(work)
+        return data, r.returncode
+    return r.stdout, r.returncode
 
 
 def write_corpus(path: str, nlines: int) -> None:
+    # ~10% of lines carry DEBUG so -d -m is a real filter, not "delete all".
     with open(path, "w", encoding="ascii") as f:
         for i in range(nlines):
-            f.write(f"name{i},foo,{i},DEBUG extra {i}\n")
+            tag = "DEBUG" if i % 10 == 0 else "keep"
+            f.write(f"name{i},foo,{i},{tag} extra {i}\n")
 
 
 def tool(env_name: str, fallback: str) -> str:
     return os.environ.get(env_name, fallback)
+
+
+def rss_stats(rsses: list[int]) -> tuple[int | None, int | None, int | None]:
+    if not rsses:
+        return None, None, None
+    xs = [float(x) for x in rsses]
+    return int(min(rsses)), int(median(xs)), int(p90(xs))
 
 
 def main() -> int:
@@ -142,11 +157,17 @@ def main() -> int:
     ]
     sed = tool("IV_BENCH_SED", "sed")
     awk = tool("IV_BENCH_AWK", which("awk") or "awk")
+    seed_env = os.environ.get("IV_BENCH_SEED", "").strip()
+    seed = int(seed_env) if seed_env else int.from_bytes(os.urandom(4), "little")
+    rng = random.Random(seed)
     outdir = tempfile.mkdtemp(prefix="iv-heavy-")
 
     print(f"iv={iv}")
     print(f"host={platform.node()} {platform.machine()} {platform.release()}")
-    print(f"trials={trials} warmup={warmup} sizes={sizes} pin={os.environ.get('IV_BENCH_TASKSET', '0-3')}")
+    print(
+        f"trials={trials} warmup={warmup} sizes={sizes} "
+        f"pin={os.environ.get('IV_BENCH_TASKSET', '0-3')} seed={seed}"
+    )
     print(f"tmp={outdir}")
     print(f"iv version: {first_line([iv, '-V'])}")
     print(f"sed: {sed}")
@@ -156,6 +177,15 @@ def main() -> int:
     print("peers: sed, awk  (not grep/tail/wc — pipe to those)")
     print()
 
+    compete = [
+        ("iv -s stdout lit", "sed stdout lit"),
+        ("iv -s stdout lit", "awk stdout lit"),
+        ("iv -s inplace lit", "sed -i lit"),
+        ("iv -s -E stdout", "sed -E stdout"),
+        ("iv -d -m stdout", "sed /DEBUG/d"),
+        ("iv -d -m stdout", "awk !/DEBUG/"),
+        ("iv -s -F stdout", "awk -F, field"),
+    ]
     rows: list[dict] = []
     try:
         for n in sizes:
@@ -166,7 +196,6 @@ def main() -> int:
             print(f"   bytes={nbytes}", flush=True)
 
             jobs: list[tuple[str, list[str], str | None]] = [
-                # compete
                 (f"{n} iv -s stdout lit", [iv, "-s", src, "foo", "FOO", "-g", "--stdout", "-q"], None),
                 (f"{n} sed stdout lit", [sed, "s/foo/FOO/g", src], None),
                 (f"{n} awk stdout lit", [awk, "{gsub(/foo/,\"FOO\")}1", src], None),
@@ -181,18 +210,84 @@ def main() -> int:
                 (f"{n} awk -F, field", [awk, "-F,", 'BEGIN{OFS=","} {$3="X"}1', src], None),
                 (f"{n} iv -d -3--1 inplace", [iv, "-d", "__FILE__", "-3--1", "-q"], src),
             ]
+            by_short: dict[str, tuple[list[str], str | None]] = {}
             for name, cmd, inplace in jobs:
-                if not which(cmd[0]) and not os.path.isfile(cmd[0]):
-                    print(f"SKIP {name}: no {cmd[0]}", flush=True)
+                short = name.split(" ", 1)[1]
+                by_short[short] = (cmd, inplace)
+
+            print("   equiv:", flush=True)
+            for a, b in compete:
+                if a not in by_short or b not in by_short:
                     continue
-                rec = bench(name, cmd, trials, warmup, inplace)
-                rec["lines"] = n
-                rec["bytes"] = nbytes
+                acmd, aip = by_short[a]
+                bcmd, bip = by_short[b]
+                if not which(acmd[0]) and not os.path.isfile(acmd[0]):
+                    print(f"    SKIP {a}: no {acmd[0]}", flush=True)
+                    continue
+                if not which(bcmd[0]) and not os.path.isfile(bcmd[0]):
+                    print(f"    SKIP {b}: no {bcmd[0]}", flush=True)
+                    continue
+                da, rca = capture_bytes(acmd, aip)
+                db, rcb = capture_bytes(bcmd, bip)
+                if rca != 0 or rcb != 0:
+                    print(f"    FAIL {a} vs {b}: rc {rca}/{rcb}", flush=True)
+                    return 1
+                if da != db:
+                    print(
+                        f"    FAIL {a} vs {b}: output differs "
+                        f"({len(da)} vs {len(db)} bytes)",
+                        flush=True,
+                    )
+                    return 1
+                print(f"    OK   {a} == {b}  ({len(da)} bytes)", flush=True)
+
+            live = [
+                j
+                for j in jobs
+                if which(j[1][0]) or os.path.isfile(j[1][0])
+            ]
+            walls: dict[str, list[float]] = {name: [] for name, _, _ in live}
+            rsses: dict[str, list[int]] = {name: [] for name, _, _ in live}
+            rcs: dict[str, int] = {name: 0 for name, _, _ in live}
+
+            for name, cmd, inplace in live:
+                for _ in range(warmup):
+                    run_once(cmd, inplace)
+
+            for _ in range(trials):
+                order = list(live)
+                rng.shuffle(order)
+                for name, cmd, inplace in order:
+                    w, rss, rc = run_once(cmd, inplace)
+                    walls[name].append(w)
+                    if rss is not None:
+                        rsses[name].append(rss)
+                    rcs[name] = rc
+
+            for name, cmd, _inplace in live:
+                rmin, rmed, rp = rss_stats(rsses[name])
+                rec = {
+                    "name": name,
+                    "cmd": " ".join(cmd),
+                    "n": trials,
+                    "min": min(walls[name]),
+                    "med": median(walls[name]),
+                    "p90": p90(walls[name]),
+                    "rss_min": rmin,
+                    "rss": rmed,
+                    "rss_p90": rp,
+                    "rc": rcs[name],
+                    "lines": n,
+                    "bytes": nbytes,
+                }
                 rows.append(rec)
-                rss = f"{rec['rss']}KB" if rec["rss"] else "?"
+                rss = f"med={rmed}KB" if rmed is not None else "?"
+                extra = ""
+                if rmin is not None and rp is not None:
+                    extra = f" min={rmin} p90={rp}"
                 print(
                     f"{rec['name']:<36} min={rec['min']:.3f}s  med={rec['med']:.3f}s  "
-                    f"p90={rec['p90']:.3f}s  rss={rss}  rc={rec['rc']}",
+                    f"p90={rec['p90']:.3f}s  rss_{rss}{extra}  rc={rec['rc']}",
                     flush=True,
                 )
             print(flush=True)
@@ -203,17 +298,8 @@ def main() -> int:
     for r in rows:
         by_size.setdefault(r["lines"], {})[r["name"].split(" ", 1)[1]] = r
 
-    compete = [
-        ("iv -s stdout lit", "sed stdout lit"),
-        ("iv -s stdout lit", "awk stdout lit"),
-        ("iv -s inplace lit", "sed -i lit"),
-        ("iv -s -E stdout", "sed -E stdout"),
-        ("iv -d -m stdout", "sed /DEBUG/d"),
-        ("iv -d -m stdout", "awk !/DEBUG/"),
-        ("iv -s -F stdout", "awk -F, field"),
-    ]
-
-    print("=== iv vs sed/awk  (median; <1 iv faster) ===")
+    print("=== iv vs sed/awk  (median wall; <1 iv faster) ===")
+    print("claim: competitive with mawk on one-pass transforms; faster than GNU sed here.")
     for n in sizes:
         print(f"-- {n} lines --")
         bag = by_size.get(n, {})

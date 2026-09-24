@@ -12,9 +12,9 @@ trap 'rm -rf "$TMP"' EXIT
 
 cd "$TMP"
 
-# line count
+# view
 printf 'a\nb\nc\n' > sample.txt
-[[ "$("$BIN" -wc sample.txt)" == "3" ]] || { echo "FAIL: -wc"; exit 1; }
+[[ "$("$BIN" -v sample.txt --no-numbers)" == $'a\nb\nc' ]] || { echo "FAIL: -v"; exit 1; }
 
 # append
 "$BIN" -a sample.txt "d" -q
@@ -53,12 +53,5 @@ if "$BIN" -a bin.txt x -q 2>/dev/null; then
 	echo "FAIL: binary should be rejected"
 	exit 1
 fi
-
-# JSON line numbers
-printf 'foo\nbar\nfoo\n' > find.txt
-[[ "$("$BIN" -n find.txt foo --json)" == '{"lines":[1,3]}' ]] || {
-	echo "FAIL: --json"
-	exit 1
-}
 
 echo "smoke OK"

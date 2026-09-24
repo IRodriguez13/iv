@@ -5,6 +5,7 @@
 # Objects and out-of-tree build
 *.o
 /build/
+/build-musl/
 
 # Test helpers compiled on the host
 tests/helpers/*.so

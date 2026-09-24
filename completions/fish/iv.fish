@@ -7,9 +7,6 @@ function __iv_complete --description 'Register iv completions'
 	complete -c $cmd -s V -l version -d 'Show version'
 	complete -c $cmd -s v -d 'View file with line numbers'
 	complete -c $cmd -s va -d 'View line range'
-	complete -c $cmd -s wc -d 'Count lines'
-	complete -c $cmd -s n -d 'Line numbers for pattern'
-	complete -c $cmd -s nv -d 'Lines matching pattern'
 	complete -c $cmd -s i -l insert -d 'Insert text'
 	complete -c $cmd -s a -d 'Append text'
 	complete -c $cmd -s p -d 'Patch file(s)'
@@ -26,7 +23,6 @@ function __iv_complete --description 'Register iv completions'
 	complete -c $cmd -s E -l regex -d 'Regex substitute'
 	complete -c $cmd -s q -d 'Quiet'
 	complete -c $cmd -l stdout -d 'Write to stdout only'
-	complete -c $cmd -l json -d 'JSON output for -n'
 	complete -c $cmd -s m -d 'Filter lines by pattern' -x
 	complete -c $cmd -s F -d 'Replace delimited field' -x
 	complete -c $cmd -s e -d 'Extra substitute' -x

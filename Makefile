@@ -17,7 +17,7 @@ SRCS = $(SRCDIR)/main.c $(SRCDIR)/view.c $(SRCDIR)/edit.c \
 OBJS = $(patsubst $(SRCDIR)/%.c,$(BUILDDIR)/%.o,$(SRCS))
 TARGET = iv
 
-.PHONY: all clean install uninstall test test-musl
+.PHONY: all clean install uninstall test test-musl bench
 
 all: $(TARGET)
 
@@ -54,13 +54,21 @@ test: $(TARGET)
 	@./tests/run-misc.sh "$(CURDIR)/$(TARGET)"
 
 # Same suite against a musl-linked binary (reviewer libc matrix).
+# Separate BUILDDIR so musl .o files cannot be relinked into the glibc iv.
 test-musl:
-	$(MAKE) clean
-	$(MAKE) CC=musl-gcc TARGET=iv-musl
+	$(MAKE) CC=musl-gcc TARGET=iv-musl BUILDDIR=build-musl
 	@./tests/smoke.sh "$(CURDIR)/iv-musl"
 	@./tests/safety.sh "$(CURDIR)/iv-musl"
 	@./tests/run-misc.sh "$(CURDIR)/iv-musl"
 
+# Compete vs GNU sed / mawk. Not part of `make test` (minutes, pinned peers).
+# Env: IV_BENCH_SED, IV_BENCH_AWK, IV_BENCH_LINES, IV_BENCH_TRIALS, IV_BENCH_SEED.
+BENCH_LINES ?= 1000000,3000000
+BENCH_TRIALS ?= 11
+bench: $(TARGET)
+	IV_BENCH_LINES=$(BENCH_LINES) IV_BENCH_TRIALS=$(BENCH_TRIALS) \
+		python3 tests/bench_vs_unix.py "$(CURDIR)/$(TARGET)"
+
 clean:
 	rm -f $(TARGET) iv-musl tests/helpers/eintr_read.so
-	rm -rf $(BUILDDIR)
+	rm -rf $(BUILDDIR) build-musl
