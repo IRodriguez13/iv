@@ -7,26 +7,39 @@
 #include <regex.h>
 #include <sys/stat.h>
 
-static void usage(const char *prog)
+static void usage(FILE *out, const char *prog)
 {
-    fprintf(stderr, "Usage:\n");
-    fprintf(stderr, "  %s -h|--help\n", prog);
-    fprintf(stderr, "  %s -V|--version\n", prog);
-    fprintf(stderr, "  %s -v [--no-numbers] file\n", prog);
-    fprintf(stderr, "  %s -va [--no-numbers] start-end file\n", prog);
-    fprintf(stderr, "  %s -i|-insert file [start-end] \"text\" [-q] [--dry-run]\n", prog);
-    fprintf(stderr, "  %s -a file \"text\" [-q]\n", prog);
-    fprintf(stderr, "  %s -p file [file...] [range] content [-q]\n", prog);
-    fprintf(stderr, "  %s -pi file [file...] line content [-q]\n", prog);
-    fprintf(stderr, "  %s -d|-delete file [start-end] [-m pattern] [--dry-run]\n", prog);
-    fprintf(stderr, "  %s -r|-replace file [start-end] \"text\" [-m pattern] [-q] [--dry-run]\n", prog);
-    fprintf(stderr, "  %s -s file pattern replacement [-e pat repl] [-m pattern] [-F delim N val] [-E] [-g]\n", prog);
-    fprintf(stderr, "\nGlobal options: --dry-run --no-numbers -g -E -q --stdout\n");
-    fprintf(stderr, "Backup (off unless asked): -b  --backup[=none|numbered|existing|simple]\n");
-    fprintf(stderr, "                           -S, --suffix=SUFFIX\n");
-    fprintf(stderr, "-m pattern  -F delim N\n");
-    fprintf(stderr, "Text: \"-\" = stdin, existing path = file content, anything else = literal.\n");
-    fprintf(stderr, "Ranges: 1-5, -3--1, -5-, 2-.\n");
+    fprintf(out, "Usage: %s COMMAND FILE [ARGS]\n", prog);
+    fprintf(out, "       %s -h | -V\n", prog);
+    fputs("\n"
+          "Commands:\n"
+          "  -v  FILE                 print with line numbers\n"
+          "  -va RANGE FILE           print a line range\n"
+          "  -s  FILE PAT REPL        substitute (first match per line)\n"
+          "  -d  FILE [RANGE]         delete lines\n"
+          "  -r  FILE [RANGE] TEXT    replace lines\n"
+          "  -i  FILE [RANGE] TEXT    insert before RANGE start (else append)\n"
+          "  -a  FILE TEXT            append\n"
+          "  -p  FILE... [RANGE] TEXT replace RANGE (else append)\n"
+          "  -pi FILE... LINE TEXT    insert before LINE\n"
+          "\n"
+          "Options:\n"
+          "  -m PAT        only matching lines (-s, -d, -r)\n"
+          "  -e PAT REPL   extra substitute pair\n"
+          "  -F D N VAL    replace field N (byte delimiter)\n"
+          "  -E            POSIX ERE for -s and -m\n"
+          "  -g            every match on the line\n"
+          "  -q            no tee / no Replaced N\n"
+          "  --stdout      write result to stdout\n"
+          "  --dry-run     print result; do not write\n"
+          "  -b            GNU backup (existing)\n"
+          "  --backup[=M]  GNU backup (none|numbered|existing|simple)\n"
+          "  -S SUFFIX     backup suffix (also enables backup)\n"
+          "  --no-numbers  no line numbers (-v, -va)\n"
+          "\n"
+          "Text: \"-\" = stdin, existing path = file, else literal.\n"
+          "Ranges: 1-5, -3--1, -5-, 2-.\n",
+          out);
 }
 
 static int parse_opts(int argc, char *argv[], IvOpts *opts)
@@ -435,7 +448,7 @@ int main(int argc, char *argv[])
 
     if (argc < 2)
     {
-        usage(argv[0]);
+        usage(stderr, argv[0]);
         return 1;
     }
 
@@ -443,7 +456,7 @@ int main(int argc, char *argv[])
 
     if (strcmp(flag, "-h") == 0 || strcmp(flag, "--help") == 0)
     {
-        usage(argv[0]);
+        usage(stdout, argv[0]);
         return 0;
     }
     if (strcmp(flag, "-V") == 0 || strcmp(flag, "--version") == 0)
@@ -463,7 +476,7 @@ int main(int argc, char *argv[])
 
     if (argc < 3)
     {
-        usage(argv[0]);
+        usage(stderr, argv[0]);
         return 1;
     }
 
@@ -923,6 +936,6 @@ int main(int argc, char *argv[])
     }
 
     fprintf(stderr, "Unknown flag: %s\n", flag);
-    usage(argv[0]);
+    usage(stderr, argv[0]);
     return 1;
 }
