@@ -3,8 +3,8 @@
 . "${srcdir=.}/tests/init.sh"
 
 print_ver_
-# --version is English; first line is "iv MAJOR.MINOR.PATCH".
-"$IV" --version | head -n 1 | grep -E '^iv [0-9]+\.[0-9]+\.[0-9]+$' >/dev/null || fail=1
+# --version is English; first line is GNU-style "iv (Inline Viewer) MAJOR.MINOR.PATCH".
+"$IV" --version | head -n 1 | grep -E '^iv \(Inline Viewer\) [0-9]+\.[0-9]+\.[0-9]+$' >/dev/null || fail=1
 "$IV" --version | grep -F 'License GPLv3+' >/dev/null || fail=1
 "$IV" --version | grep -F 'Copyright (C)' >/dev/null || fail=1
 
