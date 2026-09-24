@@ -97,18 +97,10 @@ y los diagnósticos están en inglés. Este manual se lee con
 Las distros traducen el manual, no
 .BR \-\-version .
 .PP
-Los argumentos de texto admiten tres formas:
-.RS
-.IP \(bu 2
-.B \-
-lee desde stdin
-.IP \(bu 2
-ruta a un archivo existente
-lee el contenido del archivo
-.IP \(bu 2
-cualquier otro texto
-se usa como literal
-.RE
+Argumentos de texto: \fB\-\fR es stdin; cualquier otra cadena es literal.
+Una ruta existente no se lee como archivo.
+Para insertar el contenido de un archivo: \fBiv \-p dest \- < snippet\fR.
+Un destino llamado \fB\-\fR se pasa como \fB./\-\fR.
 .SH COMANDOS DE VISUALIZACIÓN
 .TP
 .B \-v

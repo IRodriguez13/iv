@@ -96,18 +96,10 @@ and diagnostics are English. A Spanish page is
 when installed. Distros translate manuals, not
 .BR \-\-version .
 .PP
-Text arguments accept three forms:
-.RS
-.IP \(bu 2
-.B \-
-reads from stdin
-.IP \(bu 2
-path to existing file
-reads file content
-.IP \(bu 2
-any other text
-used as literal
-.RE
+Text arguments: \fB\-\fR is stdin; anything else is literal.
+An existing path is not read as a file.
+To insert file contents, redirect: \fBiv \-p dest \- < snippet\fR.
+A target file named \fB\-\fR is passed as \fB./\-\fR.
 .SH VIEW COMMANDS
 .TP
 .B \-v

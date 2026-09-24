@@ -37,7 +37,7 @@ static void usage(FILE *out, const char *prog)
           "  -S SUFFIX     backup suffix (also enables backup)\n"
           "  --no-numbers  no line numbers (-v, -va)\n"
           "\n"
-          "Text: \"-\" = stdin, existing path = file, else literal.\n"
+          "Text: \"-\" = stdin; anything else is literal.\n"
           "Ranges: 1-5, -3--1, -5-, 2-.\n",
           out);
 }
@@ -230,47 +230,12 @@ char *read_stdin(void)
     return buf;
 }
 
-char *read_file_content(const char *path)
-{
-    FILE *f = fopen(path, "r");
-    if (!f)
-        return NULL;
-    size_t cap = 4096, len = 0;
-    char *buf = malloc(cap);
-    if (!buf)
-    {
-        fclose(f);
-        return NULL;
-    }
-    while (fgets(buf + len, (int)(cap - len), f))
-    {
-        len += strlen(buf + len);
-        if (len + 1 >= cap)
-        {
-            cap *= 2;
-            char *tmp = realloc(buf, cap);
-            if (!tmp)
-            {
-                free(buf);
-                fclose(f);
-                return NULL;
-            }
-            buf = tmp;
-        }
-    }
-    fclose(f);
-    return buf;
-}
-
 static char *resolve_text(const char *arg)
 {
     if (!arg || !*arg)
         return strdup("");
     if (strcmp(arg, "-") == 0)
         return read_stdin();
-    char *content = read_file_content(arg);
-    if (content)
-        return content;
     return strdup(arg);
 }
 

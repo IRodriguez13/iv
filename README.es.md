@@ -107,27 +107,23 @@ Base 1.
 
 ## Argumentos de texto
 
-En `-i`, `-a`, `-r` y el contenido de un parche:
-
-| Argumento | Significado |
-|-----------|-------------|
-| `-` | Lee stdin |
-| Ruta de un archivo existente | Lee ese archivo |
-| Cualquier otra cadena | Texto literal |
-
-Un archivo cuyo nombre es `-` se pasa como `./-`.
+En `-i`, `-a`, `-r` y el contenido de un parche: `-` es stdin; cualquier
+otra cadena es literal. Una ruta existente no se lee como archivo
+(`iv -r foo 3 bar` sigue siendo `bar` aunque exista `./bar`). El
+contenido de un archivo entra por stdin:
 
 ```bash
 echo "línea nueva" | iv -p file
-iv -p main.c snippet.c
-iv -p main.c 5 snippet.c
-iv -p main.c 1-3 plantilla.txt
+iv -p dest - < snippet.c
+iv -p dest 5 - < snippet.c
 iv -pi main.c 1 "#include <foo.h>"
 iv -s file "[0-9]+" "X" -E
 iv -s file a b -e c d
 cat file | iv -s - old new --stdout
 iv -s file a b --stdout | iv -s - b c --stdout
 ```
+
+Un archivo destino cuyo nombre es `-` se pasa como `./-`.
 
 ## Escapes
 

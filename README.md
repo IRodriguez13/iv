@@ -106,27 +106,22 @@ as the substitute (literal, or ERE with `-E`).
 
 ## Text arguments
 
-For `-i`, `-a`, `-r`, and patch content:
-
-| Argument | Meaning |
-|----------|---------|
-| `-` | Read stdin |
-| Path of an existing file | Read that file |
-| Anything else | Literal text |
-
-A file whose name is `-` must be passed as `./-`.
+For `-i`, `-a`, `-r`, and patch content: `-` is stdin; anything else is
+literal. An existing path is not read as a file (`iv -r foo 3 bar` stays
+`bar` even if `./bar` exists). File contents go through stdin:
 
 ```bash
 echo "new line" | iv -p file
-iv -p main.c snippet.c
-iv -p main.c 5 snippet.c
-iv -p main.c 1-3 template.txt
+iv -p dest - < snippet.c
+iv -p dest 5 - < snippet.c
 iv -pi main.c 1 "#include <foo.h>"
 iv -s file "[0-9]+" "X" -E
 iv -s file a b -e c d
 cat file | iv -s - old new --stdout
 iv -s file a b --stdout | iv -s - b c --stdout
 ```
+
+A target file whose name is `-` must be passed as `./-`.
 
 ## Escapes
 

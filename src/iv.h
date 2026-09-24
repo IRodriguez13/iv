@@ -112,7 +112,6 @@ int iv_stdout_closed(void);
 int iv_check_stream(FILE *f);
 
 char *read_stdin(void);
-char *read_file_content(const char *path);
 
 int  stream_show_file(FILE *f, int no_numbers);
 
