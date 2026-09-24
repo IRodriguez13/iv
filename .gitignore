@@ -1,6 +1,33 @@
-*.o
+# Binaries
 /iv
+/iv-musl
+
+# Objects and out-of-tree build
+*.o
 /build/
+
+# Test helpers compiled on the host
+tests/helpers/*.so
+
+# Python bench leftovers
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Editor / IDE
 *.swp
+*~
+*.bak
 .DS_Store
 .cursor/
+.vscode/
+.idea/
+.cache/
+
+# Compile / debug debris
+compile_commands.json
+core
+core.*
+*.gcda
+*.gcno
+*.gcov

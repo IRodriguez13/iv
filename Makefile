@@ -10,19 +10,25 @@ CC ?= gcc
 CFLAGS ?= -Wall -Wextra -O2 -D_GNU_SOURCE -D_POSIX_C_SOURCE=200809L
 LDFLAGS ?=
 
-SRCS = main.c view.c edit.c range.c write.c
-OBJS = $(SRCS:.c=.o)
+SRCDIR = src
+BUILDDIR = build
+SRCS = $(SRCDIR)/main.c $(SRCDIR)/view.c $(SRCDIR)/edit.c \
+	$(SRCDIR)/range.c $(SRCDIR)/write.c
+OBJS = $(patsubst $(SRCDIR)/%.c,$(BUILDDIR)/%.o,$(SRCS))
 TARGET = iv
 
 .PHONY: all clean install uninstall test test-musl
 
 all: $(TARGET)
 
+$(BUILDDIR):
+	mkdir -p $(BUILDDIR)
+
+$(BUILDDIR)/%.o: $(SRCDIR)/%.c $(SRCDIR)/iv.h | $(BUILDDIR)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
 $(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
-
-%.o: %.c iv.h
-	$(CC) $(CFLAGS) -c -o $@ $<
 
 install: $(TARGET)
 	install -d "$(BINDIR)" "$(MANDIR)" "$(MANESDIR)" \
@@ -56,4 +62,5 @@ test-musl:
 	@./tests/run-misc.sh "$(CURDIR)/iv-musl"
 
 clean:
-	rm -f $(TARGET) iv-musl $(OBJS) tests/helpers/eintr_read.so
+	rm -f $(TARGET) iv-musl tests/helpers/eintr_read.so
+	rm -rf $(BUILDDIR)
